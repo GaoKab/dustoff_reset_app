@@ -18,7 +18,7 @@ export const PANEL_DIMENSIONS = {
   parkingLotHarvest: { width: 660, height: 720 },// Harvest panel
   postSessionSummary: { width: 640, height: 850 },// Session summary (with bandwidth impact)
   progress: { width: 640, height: 860 },         // Progress dashboard (trends + weekly summary)
-  settings: { width: 520, height: 860 },         // Settings (night phases, override, tone, prompt style, AI pause)
+  settings: { width: 520, height: 900 },         // Settings (night mode, work schedule, override, tone, prompt style, AI pause); the panel scrolls
   shutdown: { width: 520, height: 760 },         // Night mode: three-step Shutdown Protocol
   nightProtection: { width: 520, height: 760 },  // Night mode: STOP screen and its choices
   sessionReflection: { width: 600, height: 640 },// Reflection questions (increased)

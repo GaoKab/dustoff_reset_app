@@ -75,12 +75,13 @@ import { ProgressPanelAdapter } from '@/components/panels/ProgressPanelAdapter'
 
 // Absorbed from the Chrome extension: preferences, night mode, tone/style copy, AI-site pause
 import { usePreferences } from '@/hooks/usePreferences'
+import type { ScheduleMode } from '@/lib/preferences/types'
 import { useAiSitePause } from '@/hooks/useAiSitePause'
 import { useNightMode } from '@/hooks/useNightMode'
 import { applyToneToIntervention, getAiPauseCopy, type CopyContext } from '@/lib/copy'
 import { SettingsPanelAdapter } from '@/components/panels/SettingsPanelAdapter'
 import { AiPauseOverlay } from '@/features/desktop/overlays/AiPauseOverlay'
-import { WindDownCard, ShutdownNudge, OverrideCountdownCard, LateStartLine } from '@/components/NightNudges'
+import { WindDownCard, ShutdownNudge, OverrideCountdownCard, LateStartLine, ScheduleSetupCard } from '@/components/NightNudges'
 import { ShutdownPanel } from '@/features/desktop/panels/ShutdownPanel'
 import { NightProtectionPanel } from '@/features/desktop/panels/NightProtectionPanel'
 
@@ -349,7 +350,7 @@ function App() {
   // PREFERENCES, NIGHT MODE, COPY CONTEXT, AI-SITE PAUSE
   // (absorbed from the retired Chrome extension)
   // ============================================
-  const { preferences, preferencesRef, updatePreferences } = usePreferences()
+  const { preferences, preferencesRef, isLoaded: preferencesLoaded, updatePreferences } = usePreferences()
 
   // Three-phase night mode: phase tick, once-per-night cards, STOP screen,
   // emergency override and event recording live in src/hooks/useNightMode
@@ -396,9 +397,21 @@ function App() {
   // Cards under the HUD: wind-down once per evening, the shutdown offer
   // once per evening, the override countdown while one runs. Never forced.
   const cardsAllowed = !currentPanel && !showEndSessionModal && !showTimeUpModal && !preMeetingNudgeVisible
-  const windDownCardVisible = cardsAllowed && night.windDown.visible
-  const shutdownNudgeVisible = cardsAllowed && !windDownCardVisible && night.shutdown.nudgeVisible
+  // First run: "When do you usually work?" once, remembered in preferences.
+  // Shown at the first idle moment, ahead of the night cards.
+  const scheduleCardVisible = cardsAllowed && mode === 'idle' && preferencesLoaded && !preferences.scheduleSetupDone
+  const windDownCardVisible = cardsAllowed && !scheduleCardVisible && night.windDown.visible
+  const shutdownNudgeVisible = cardsAllowed && !scheduleCardVisible && !windDownCardVisible && night.shutdown.nudgeVisible
   const overrideCardVisible = !currentPanel && night.override.active
+
+  const handleScheduleChoice = (scheduleMode: ScheduleMode) => {
+    updatePreferences({ scheduleMode, scheduleSetupDone: true })
+    // A shift or custom schedule needs days and hours: open Settings to fill them in
+    if (scheduleMode !== 'standard') setCurrentPanel('settings')
+  }
+  const handleScheduleLater = () => {
+    updatePreferences({ scheduleSetupDone: true })
+  }
 
   // Show the STOP screen as a full panel whenever night protection asks for it
   useEffect(() => {
@@ -482,18 +495,19 @@ function App() {
   // cards under the HUD needs room: pre-meeting nudge, night cards,
   // AI-site pause)
   const cardBelowHudVisible =
-    preMeetingNudgeVisible || windDownCardVisible || shutdownNudgeVisible || overrideCardVisible || aiPauseVisible
+    preMeetingNudgeVisible || scheduleCardVisible || windDownCardVisible || shutdownNudgeVisible || overrideCardVisible || aiPauseVisible
+  const tallCardVisible = windDownCardVisible || scheduleCardVisible
   useEffect(() => {
     if (showEndSessionModal || showTimeUpModal) {
       resizeForPanel('endSession')
     } else if (!currentPanel) {
       if (cardBelowHudVisible) {
-        tauriBridge.resizeWindow(320, windDownCardVisible ? 440 : 240)
+        tauriBridge.resizeWindow(320, tallCardVisible ? 440 : 240)
       } else {
         resizeForPanel(null) // Back to HUD only
       }
     }
-  }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible, windDownCardVisible])
+  }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible, tallCardVisible])
 
   // Resize window for badge panels AND resize back when badges close
   useEffect(() => {
@@ -2295,6 +2309,11 @@ function App() {
             onReset={handleNudgeReset}
             onDismiss={handleNudgeDismiss}
           />
+        )}
+
+        {/* First run: when do you usually work? Once, remembered. */}
+        {scheduleCardVisible && (
+          <ScheduleSetupCard onChoose={handleScheduleChoice} onLater={handleScheduleLater} />
         )}
 
         {/* Night mode cards: wind-down once per evening, shutdown offer once

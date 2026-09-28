@@ -5,11 +5,14 @@
 // - ShutdownNudge: once per evening in shutdown, offers the 15-minute protocol
 // - OverrideCountdownCard: visible countdown while an emergency override runs
 // - LateStartLine: one line above the session start flow late at night
+// - ScheduleSetupCard: the first-run "When do you usually work?" question
 
 import { useState } from 'react'
-import { Moon, Sunset, X, Clock, Check } from 'lucide-react'
+import { Moon, Sunset, X, Clock, Check, Briefcase } from 'lucide-react'
 import { NIGHT_COPY } from '@/lib/copy'
 import { formatCountdown } from '@/lib/night'
+import { SCHEDULE_MODES, type ScheduleMode } from '@/lib/preferences/types'
+import { SCHEDULE_LABELS } from '@/features/desktop/panels/SettingsPanel'
 
 // ============================================
 // WIND-DOWN CARD
@@ -176,6 +179,56 @@ export function LateStartLine() {
     <div className="mb-2 flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0a0f0d]/80 border border-indigo-400/20 text-xs text-indigo-200/90">
       <Moon className="w-3.5 h-3.5 text-indigo-300 flex-shrink-0" />
       <span>{NIGHT_COPY.lateStartLine}</span>
+    </div>
+  )
+}
+
+// ============================================
+// SCHEDULE SETUP (first run, once)
+// ============================================
+
+interface ScheduleSetupCardProps {
+  /** The person picked one of the three; the caller saves it and, for a
+   *  shift or custom schedule, opens Settings to fill in the hours */
+  onChoose: (mode: ScheduleMode) => void
+  /** "Later" keeps the standard clock and does not ask again */
+  onLater: () => void
+}
+
+export function ScheduleSetupCard({ onChoose, onLater }: ScheduleSetupCardProps) {
+  return (
+    <div className="mt-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="w-[320px] rounded-2xl bg-[#0a0f0d]/90 backdrop-blur-xl border border-emerald-400/30 shadow-2xl p-4">
+        <div className="flex items-start gap-3">
+          <div className="p-1.5 bg-emerald-500/20 rounded-lg flex-shrink-0">
+            <Briefcase className="w-4 h-4 text-emerald-300" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-white font-light">When do you usually work?</p>
+            <p className="text-xs text-zinc-400 mt-0.5">Night mode fits around your day. You can change this any time in Settings.</p>
+          </div>
+          <button
+            onClick={onLater}
+            className="text-zinc-500 hover:text-zinc-300 transition-colors flex-shrink-0"
+            title="Later"
+            aria-label="Later"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="mt-3 space-y-1.5">
+          {SCHEDULE_MODES.map(mode => (
+            <button
+              key={mode}
+              onClick={() => onChoose(mode)}
+              className="w-full p-2.5 rounded-lg border border-zinc-700 bg-zinc-900/60 hover:border-emerald-500/60 hover:bg-emerald-500/10 text-left transition-colors"
+            >
+              <div className="text-xs text-white font-light">{SCHEDULE_LABELS[mode].label}</div>
+              <div className="text-[11px] text-zinc-500 mt-0.5 leading-snug">{SCHEDULE_LABELS[mode].hint}</div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
