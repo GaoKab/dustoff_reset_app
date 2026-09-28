@@ -28,6 +28,7 @@ Dustoff Reset is a **cognitive capacity management system** that operates as a d
 12. [Window Management](#12-window-management)
 13. [Permission System](#13-permission-system)
 14. [Cross-Platform Support](#14-cross-platform-support)
+15. [v0.3.0-dev: Absorbed Extension Features](#15-v030-dev-absorbed-extension-features)
 
 ---
 
@@ -562,6 +563,35 @@ pub trait PlatformMonitor {
 
 ---
 
+## 15. v0.3.0-dev: Absorbed Extension Features
+
+The Chrome extension is being retired; the desktop app is the one tool. Three of its behaviours now live in the app. Everything is local (SQLite `preferences` table, schema v3), nothing is forced, and the user can turn each piece off in the new Settings panel (gear on the idle HUD).
+
+### 15.1 Night Mode
+
+- **Setting:** on by default, window editable, default 20:00 to 06:00.
+- **Phases inside the window** (`src/lib/night`): `wind-down` (window start to 22:00), `close-day` (22:00 to midnight), `after-midnight` (midnight to window end).
+- **Behaviour:** the HUD dims and desaturates; friction and focus-slipping copy shifts to wind-down wording ("Tomorrow, you will be grateful you rested."); passive decay is unchanged; the first idle moment after 22:00 offers a "close the day" reset once per day (dismissable, remembered per day in local storage); any session started after midnight shows a one-line nudge above the start flow. No blocking, no override timers.
+
+### 15.2 Tone and Prompt Style
+
+- **Tone:** `gentle` | `standard` | `firm` (default standard). Gentle uses softer titles and actions and never escalates to a Flow-mode delay gate (penalties still apply). Firm uses direct wording and the existing escalation. Nudge thresholds are unchanged in every tone.
+- **Prompt style:** `mindfulness` | `scientific` | `spiritual` (default mindfulness). Drives the reset prompt shown during a ritual, the reset panel subheading, the intervention message and the AI pause subtext. The spiritual variant is kept available but is not the default.
+- **Implementation:** one copy table in `src/lib/copy/index.ts` consumed by `InterventionOverlayAdapter`, `ResetPanelAdapter`, the night nudges and the AI pause overlay. App.tsx routes `getInterventionConfig` through a single tone-aware wrapper.
+
+### 15.3 AI-Site Pause ("Hold. Stay here.")
+
+- **Trigger:** during a session, the frontmost browser tab is an AI chat site (chat.openai.com, chatgpt.com, claude.ai, gemini.google.com, perplexity.ai, chat.deepseek.com, grok.com) and the user switches away from it (tab or app) within 25 seconds of arriving.
+- **Response:** a small non-blocking card under the HUD for about 6 seconds, at most once every 10 minutes (once per hour on gentle tone). These domains stay in the productive list.
+- **Platform:** macOS only for now. Tab URLs come from AppleScript (`telemetry/app_monitor.rs`); on Windows no tab events are emitted and the feature is silently absent (the settings toggle says so). Logic lives in `src/lib/telemetry/ai-sites.ts` and `src/hooks/useAiSitePause.ts`.
+
+### 15.4 Tests
+
+- Rust: `storage/preferences.rs` unit tests (defaults, round trip, validation, sanitising, clear) plus the migration test asserts schema v3.
+- TypeScript: vitest (`npm test`) covers the copy table, the night window phases and the AI-site tracker.
+
+---
+
 ## Summary of Technical Capabilities
 
 | Capability | Implementation |
@@ -586,7 +616,7 @@ pub trait PlatformMonitor {
 | **AI Focus Coach** | Personalized recommendations |
 | **Team Analytics** | Manager dashboard |
 | **Calendar Integration** | Auto-block focus time |
-| **Browser Extension** | Tab-level blocking |
+| **Browser Extension** | Retired; its night mode, tone/style and AI pause now live in the app (see section 15) |
 | **Mobile Companion** | Break reminders, stats |
 | **Wearable Integration** | HRV-based calibration |
 
