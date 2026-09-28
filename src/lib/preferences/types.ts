@@ -7,10 +7,16 @@ export type PromptStyle = 'mindfulness' | 'scientific' | 'spiritual'
 
 export interface Preferences {
   nightModeEnabled: boolean
-  /** "HH:MM" local time */
+  /** Wind-down starts here, "HH:MM" local time. Start of the night window. */
   nightModeStart: string
-  /** "HH:MM" local time */
+  /** Shutdown protocol phase starts here, "HH:MM" */
+  shutdownStart: string
+  /** Night protection starts here, "HH:MM" */
+  protectionStart: string
+  /** Night protection ends here, "HH:MM". End of the night window. */
   nightModeEnd: string
+  /** Allow the 30-minute emergency override during night protection */
+  emergencyOverrideEnabled: boolean
   tone: Tone
   promptStyle: PromptStyle
   aiPauseEnabled: boolean
@@ -19,7 +25,10 @@ export interface Preferences {
 export const DEFAULT_PREFERENCES: Preferences = {
   nightModeEnabled: true,
   nightModeStart: '20:00',
+  shutdownStart: '22:00',
+  protectionStart: '00:00',
   nightModeEnd: '06:00',
+  emergencyOverrideEnabled: true,
   tone: 'standard',
   promptStyle: 'mindfulness',
   aiPauseEnabled: true,

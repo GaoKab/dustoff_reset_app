@@ -158,6 +158,27 @@ export interface UserData {
 export type TauriResult<T> = T | null
 
 // Command parameter types
+// ============================================
+// NIGHT MODE EVENTS
+// ============================================
+
+export type NightEventKind =
+  | 'wind_down_shown'
+  | 'shutdown_completed'
+  | 'protection_stop'
+  | 'override'
+  | 'cant_sleep'
+  | 'habit'
+  | 'session_end'
+
+export interface NightEvent {
+  id: number
+  nightDate: string               // YYYY-MM-DD, the evening the night belongs to
+  kind: NightEventKind | string
+  detail: string | null
+  createdAt: string               // ISO 8601
+}
+
 export interface GetAllSessionsParams {
   startDate?: string              // YYYY-MM-DD
   endDate?: string                // YYYY-MM-DD

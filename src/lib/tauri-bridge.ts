@@ -12,6 +12,8 @@ import type {
   ParkingLotItemUpdate,
   RecoveryData,
   UserData,
+  NightEvent,
+  NightEventKind,
 } from './tauri-types'
 import type { TelemetryEvent } from './telemetry'
 import type { 
@@ -145,6 +147,25 @@ export const tauriBridge = {
 
   savePreferences: (prefs: Preferences): Promise<void> =>
     invoke('save_preferences', { prefs }),
+
+  // ============================================
+  // NIGHT MODE EVENTS
+  // ============================================
+
+  recordNightEvent: (nightDate: string, kind: NightEventKind, detail?: string): Promise<NightEvent> =>
+    invoke('record_night_event', { nightDate, kind, detail: detail ?? null }),
+
+  getNightEvents: (nightDate: string): Promise<NightEvent[]> =>
+    invoke('get_night_events', { nightDate }),
+
+  countNightEvents: (nightDate: string, kind: NightEventKind): Promise<number> =>
+    invoke('count_night_events', { nightDate, kind }),
+
+  countNightsWithEventSince: (sinceDate: string, kind: NightEventKind): Promise<number> =>
+    invoke('count_nights_with_event_since', { sinceDate, kind }),
+
+  getLatestNightEvent: (kind: NightEventKind): Promise<NightEvent | null> =>
+    invoke('get_latest_night_event', { kind }),
 
   // ============================================
   // UTILITIES

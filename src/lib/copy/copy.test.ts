@@ -33,7 +33,7 @@ describe('copy table', () => {
 
     const panel = getResetPanelCopy({ ...DEFAULT_COPY_CONTEXT, promptStyle: 'spiritual' }, 3)
     expect(panel.prompt).toBe(RESET_PROMPTS.spiritual[3])
-    expect(getResetPanelCopy({ ...DEFAULT_COPY_CONTEXT, nightPhase: 'close-day' }).subheading).toContain('close the day')
+    expect(getResetPanelCopy({ ...DEFAULT_COPY_CONTEXT, nightPhase: 'shutdown' }).subheading).toContain('close the day')
   })
 
   it('gentle tone removes delay-gate escalation only', () => {
@@ -53,7 +53,7 @@ describe('copy table', () => {
       ...Object.values(RESET_PROMPTS).flat(),
       ...Object.values(NIGHT_COPY),
       copy.subtext,
-      getAiPauseCopy({ ...DEFAULT_COPY_CONTEXT, nightPhase: 'after-midnight' }).subtext,
+      getAiPauseCopy({ ...DEFAULT_COPY_CONTEXT, nightPhase: 'night-protection' }).subtext,
       ...(['gentle', 'standard', 'firm'] as const).flatMap(tone =>
         (['mindfulness', 'scientific', 'spiritual'] as const).flatMap(promptStyle =>
           (['friction', 'focus-slipping'] as const).flatMap(kind => {
