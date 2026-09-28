@@ -122,6 +122,8 @@ fn main() {
             commands::data::delete_parking_lot_item,
             commands::data::save_user,
             commands::data::get_user,
+            commands::data::get_preferences,
+            commands::data::save_preferences,
             commands::data::get_workday_date,
             commands::data::get_calibration_history,
             commands::data::generate_uuid,

@@ -73,6 +73,19 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
         migrate_v2(conn)?;
     }
 
+    // Migration v3: preferences table (night mode, tone, prompt style, AI pause)
+    if current_version < 3 {
+        migrate_v3(conn)?;
+    }
+
+    Ok(())
+}
+
+/// Migration v3: preferences absorbed from the retired Chrome extension
+fn migrate_v3(conn: &Connection) -> Result<(), String> {
+    super::preferences::init_preferences_table(conn)?;
+    conn.execute("UPDATE schema_version SET version = 3", [])
+        .map_err(|e| format!("Failed to update schema version: {}", e))?;
     Ok(())
 }
 
@@ -268,7 +281,13 @@ mod tests {
         assert!(tables.contains(&"parking_lot_items".to_string()));
         assert!(tables.contains(&"recovery_data".to_string()));
         assert!(tables.contains(&"user_data".to_string()));
+        assert!(tables.contains(&"preferences".to_string()));
         assert!(tables.contains(&"schema_version".to_string()));
+
+        let version: i32 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
     }
 
     #[test]

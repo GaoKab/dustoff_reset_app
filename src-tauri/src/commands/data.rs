@@ -9,6 +9,7 @@ use crate::models::{
     RecoveryData, ReflectionObject, SessionRecord,
 };
 use crate::storage;
+use crate::storage::preferences::Preferences;
 use crate::storage::user::UserData;
 use crate::AppState;
 
@@ -234,6 +235,22 @@ pub fn get_user(state: State<AppState>) -> Result<Option<UserData>, String> {
 }
 
 // ============================================
+// PREFERENCES COMMANDS
+// ============================================
+
+#[tauri::command]
+pub fn get_preferences(state: State<AppState>) -> Result<Preferences, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::preferences::get_preferences(&conn)
+}
+
+#[tauri::command]
+pub fn save_preferences(state: State<AppState>, prefs: Preferences) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::preferences::save_preferences(&conn, &prefs)
+}
+
+// ============================================
 // UTILITY COMMANDS
 // ============================================
 
@@ -258,6 +275,7 @@ pub fn reset_all_data(state: State<AppState>) -> Result<(), String> {
     storage::calibration::clear_all_calibrations(&conn)?;
     storage::recovery::clear_recovery_data(&conn)?;
     storage::user::clear_user(&conn)?;
+    storage::preferences::clear_preferences(&conn)?;
 
     Ok(())
 }
