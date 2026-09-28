@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 use crate::telemetry::persistence::init_telemetry_tables;
 
 #[allow(dead_code)]
-const CURRENT_SCHEMA_VERSION: i32 = 4;
+const CURRENT_SCHEMA_VERSION: i32 = 5;
 
 /// Get the path to the SQLite database file.
 /// Creates the app data directory if it doesn't exist.
@@ -84,6 +84,24 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
         migrate_v4(conn)?;
     }
 
+    // Migration v5: work schedule ("When do you usually work?") that the
+    // night phases are derived from
+    if current_version < 5 {
+        migrate_v5(conn)?;
+    }
+
+    Ok(())
+}
+
+/// Migration v5: work schedule. Adds schedule_mode, work_days, work_start,
+/// work_end, phase_override, keep_shift_rhythm_on_days_off and
+/// schedule_setup_done to preferences (idempotent column checks). Rows with
+/// hand-set phase bounds get phase_override so nothing changes for them.
+fn migrate_v5(conn: &Connection) -> Result<(), String> {
+    super::preferences::init_preferences_table(conn)?;
+    super::preferences::ensure_schedule_columns(conn)?;
+    conn.execute("UPDATE schema_version SET version = 5", [])
+        .map_err(|e| format!("Failed to update schema version: {}", e))?;
     Ok(())
 }
 
@@ -347,7 +365,7 @@ mod tests {
         let version: i32 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
 
         let prefs = super::super::preferences::get_preferences(&conn).unwrap();
         assert_eq!(prefs.tone, "gentle");
@@ -358,6 +376,9 @@ mod tests {
         assert_eq!(prefs.shutdown_start, "22:00");
         assert_eq!(prefs.protection_start, "00:00");
         assert!(prefs.emergency_override_enabled);
+        // v5: the hand-set 21:00 / 07:00 bounds keep winning as an override
+        assert_eq!(prefs.schedule_mode, "standard");
+        assert!(prefs.phase_override);
 
         // night_events is usable straight after the migration
         super::super::night::record_night_event(&conn, "2026-01-15", "habit", None).unwrap();
@@ -368,6 +389,67 @@ mod tests {
 
         // Running again is a no-op
         run_migrations(&conn).unwrap();
+    }
+
+    #[test]
+    fn test_migration_v4_to_v5_adds_schedule_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+
+        // Build a v4 database: run everything, then drop the v5 columns by
+        // recreating the preferences table in its v4 shape.
+        run_migrations(&conn).unwrap();
+        conn.execute_batch(
+            r#"
+            DROP TABLE preferences;
+            CREATE TABLE preferences (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                night_mode_enabled INTEGER NOT NULL DEFAULT 1,
+                night_mode_start TEXT NOT NULL DEFAULT '20:00',
+                night_mode_end TEXT NOT NULL DEFAULT '06:00',
+                tone TEXT NOT NULL DEFAULT 'standard',
+                prompt_style TEXT NOT NULL DEFAULT 'mindfulness',
+                ai_pause_enabled INTEGER NOT NULL DEFAULT 1,
+                shutdown_start TEXT NOT NULL DEFAULT '22:00',
+                protection_start TEXT NOT NULL DEFAULT '00:00',
+                emergency_override_enabled INTEGER NOT NULL DEFAULT 1
+            );
+            INSERT INTO preferences (id, tone, emergency_override_enabled) VALUES (1, 'firm', 0);
+            UPDATE schema_version SET version = 4;
+            "#,
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let version: i32 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+
+        let prefs = super::super::preferences::get_preferences(&conn).unwrap();
+        assert_eq!(prefs.tone, "firm");
+        assert!(!prefs.emergency_override_enabled);
+        assert_eq!(prefs.schedule_mode, "standard");
+        assert_eq!(prefs.work_days, [true, true, true, true, true, false, false]);
+        assert_eq!(prefs.work_start, "09:00");
+        assert_eq!(prefs.work_end, "17:00");
+        assert!(!prefs.phase_override); // default bounds, nothing to protect
+        assert!(!prefs.keep_shift_rhythm_on_days_off);
+        assert!(!prefs.schedule_setup_done); // the first-run card will show
+
+        // A schedule saves and reads back through the migrated table
+        let shifted = super::super::preferences::Preferences {
+            schedule_mode: "night_shift".to_string(),
+            work_start: "19:00".to_string(),
+            work_end: "07:00".to_string(),
+            schedule_setup_done: true,
+            ..prefs
+        };
+        super::super::preferences::save_preferences(&conn, &shifted).unwrap();
+        assert_eq!(super::super::preferences::get_preferences(&conn).unwrap(), shifted);
+
+        run_migrations(&conn).unwrap(); // no-op
     }
 
     #[test]
