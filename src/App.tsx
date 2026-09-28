@@ -73,6 +73,15 @@ import { useCalendar } from '@/hooks/useCalendar'
 import { PreMeetingNudge } from '@/components/PreMeetingNudge'
 import { ProgressPanelAdapter } from '@/components/panels/ProgressPanelAdapter'
 
+// Absorbed from the Chrome extension: preferences, night mode, tone/style copy, AI-site pause
+import { usePreferences } from '@/hooks/usePreferences'
+import { useAiSitePause } from '@/hooks/useAiSitePause'
+import { getNightPhase, localDateKey, type NightPhase } from '@/lib/night'
+import { applyToneToIntervention, getAiPauseCopy, type CopyContext } from '@/lib/copy'
+import { SettingsPanelAdapter } from '@/components/panels/SettingsPanelAdapter'
+import { AiPauseOverlay } from '@/features/desktop/overlays/AiPauseOverlay'
+import { CloseDayNudge, AfterMidnightLine } from '@/components/NightNudges'
+
 // DEV ONLY - Badge Test Panel (remove before production)
 import { BadgeTestPanel } from '@/components/dev/BadgeTestPanel'
 
@@ -198,7 +207,7 @@ function App() {
   // Reset framing: why the reset panel was opened ('critical' hard stop,
   // 'landing' after a rough session ending, 'pre-meeting' before a calendar
   // event, or null for a plain reset)
-  const [resetContext, setResetContext] = useState<'critical' | 'landing' | 'pre-meeting' | null>(null)
+  const [resetContext, setResetContext] = useState<'critical' | 'landing' | 'pre-meeting' | 'close-day' | null>(null)
   // Set when a session ends unfinished; offers a landing reset after the post-session flow
   const pendingLandingResetRef = useRef(false)
   // Pre-meeting nudge dismissal (keyed per event so each meeting nudges once)
@@ -335,6 +344,78 @@ function App() {
   }
 
   // ============================================
+  // PREFERENCES, NIGHT MODE, COPY CONTEXT, AI-SITE PAUSE
+  // (absorbed from the retired Chrome extension)
+  // ============================================
+  const { preferences, preferencesRef, updatePreferences } = usePreferences()
+
+  // Night phase, recomputed every 30s so the HUD softens on time
+  const [nightPhase, setNightPhase] = useState<NightPhase>('day')
+  useEffect(() => {
+    const compute = () => setNightPhase(getNightPhase(new Date(), preferences))
+    compute()
+    const tick = setInterval(compute, 30 * 1000)
+    return () => clearInterval(tick)
+  }, [preferences.nightModeEnabled, preferences.nightModeStart, preferences.nightModeEnd])
+
+  const copyContext: CopyContext = {
+    tone: preferences.tone,
+    promptStyle: preferences.promptStyle,
+    nightPhase,
+  }
+
+  // Tone gating for telemetry escalation: gentle never opens a delay gate
+  const getTonedInterventionConfig: typeof getInterventionConfig = (...args) =>
+    applyToneToIntervention(getInterventionConfig(...args), preferencesRef.current.tone)
+
+  // "Hold. Stay here." when tabbing away from an AI chat mid-answer (macOS only)
+  const aiPause = useAiSitePause({
+    enabled: preferences.aiPauseEnabled,
+    isSessionActive: mode === 'session',
+    tone: preferences.tone,
+  })
+  const aiPauseVisible =
+    aiPause.isVisible &&
+    !currentPanel &&
+    !delayGateState.isOpen &&
+    !blockScreenState.isOpen &&
+    !showInterventionOverlay
+
+  // Close-the-day nudge: once per day, first idle moment after 22:00. Never forces.
+  const CLOSE_DAY_KEY = 'dustoff.closeDayNudgeShownOn'
+  const [closeDayShownOn, setCloseDayShownOn] = useState<string | null>(() => {
+    try { return localStorage.getItem(CLOSE_DAY_KEY) } catch { return null }
+  })
+  const todayKey = localDateKey(new Date())
+  const closeDayNudgeVisible =
+    mode === 'idle' &&
+    !currentPanel &&
+    !showEndSessionModal &&
+    !showTimeUpModal &&
+    !preMeetingNudgeVisible &&
+    nightPhase === 'close-day' &&
+    closeDayShownOn !== todayKey
+
+  const markCloseDayShown = () => {
+    setCloseDayShownOn(todayKey)
+    try { localStorage.setItem(CLOSE_DAY_KEY, todayKey) } catch { /* private mode etc. */ }
+  }
+
+  const handleCloseDay = () => {
+    markCloseDayShown()
+    setResetContext('close-day')
+    setCurrentPanel('reset')
+  }
+
+  const handleCloseDayDismiss = () => {
+    markCloseDayShown()
+  }
+
+  const handleOpenSettings = () => {
+    setCurrentPanel('settings')
+  }
+
+  // ============================================
   // BADGES HOOK
   // ============================================
   const { evaluateSession, dailyStreak, totalBadges, unlockedCount, isStreakAtRisk: checkStreakAtRisk } = useBadges()
@@ -377,19 +458,21 @@ function App() {
     }
   }, [showPermissionSetup])
 
-  // Resize window when end session / time-up modal opens (or the
-  // pre-meeting nudge needs room below the HUD)
+  // Resize window when end session / time-up modal opens (or one of the
+  // cards under the HUD needs room: pre-meeting nudge, close-day nudge,
+  // AI-site pause)
+  const cardBelowHudVisible = preMeetingNudgeVisible || closeDayNudgeVisible || aiPauseVisible
   useEffect(() => {
     if (showEndSessionModal || showTimeUpModal) {
       resizeForPanel('endSession')
     } else if (!currentPanel) {
-      if (preMeetingNudgeVisible) {
+      if (cardBelowHudVisible) {
         tauriBridge.resizeWindow(320, 220)
       } else {
         resizeForPanel(null) // Back to HUD only
       }
     }
-  }, [showEndSessionModal, showTimeUpModal, currentPanel, preMeetingNudgeVisible])
+  }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible])
 
   // Resize window for badge panels AND resize back when badges close
   useEffect(() => {
@@ -903,7 +986,7 @@ function App() {
                 sessionManager.recordDistraction(penaltyResult.categoryName)
                 sessionManager.addTimelineBlock('distracted')
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   event.appInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -988,7 +1071,7 @@ function App() {
                   activeSince: Date.now(),
                 }
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   mockAppInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1183,7 +1266,7 @@ function App() {
                 sessionManager.recordDistraction(penaltyResult.categoryName)
                 sessionManager.addTimelineBlock('distracted')
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   event.appInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1268,7 +1351,7 @@ function App() {
                   activeSince: Date.now(),
                 }
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   mockAppInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1473,7 +1556,7 @@ function App() {
                 sessionManager.addTimelineBlock('distracted')
                 
                 // Get intervention config based on mode
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   event.appInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1566,7 +1649,7 @@ function App() {
                   activeSince: Date.now(),
                 }
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   mockAppInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -2137,6 +2220,8 @@ function App() {
           onCalibrate={handleCalibrate}
           onReset={handleReset}
           onOpenHistory={handleOpenProgress}
+          onOpenSettings={handleOpenSettings}
+          dimmed={nightPhase !== 'day'}
         />
 
         {/* Pre-meeting nudge - arrive at the next event with capacity */}
@@ -2148,6 +2233,14 @@ function App() {
             onDismiss={handleNudgeDismiss}
           />
         )}
+
+        {/* Night mode: close the day after 22:00 (once, never forced) */}
+        {closeDayNudgeVisible && (
+          <CloseDayNudge onCloseDay={handleCloseDay} onDismiss={handleCloseDayDismiss} />
+        )}
+
+        {/* AI-site pause: Hold. Stay here. (non-blocking, fades on its own) */}
+        <AiPauseOverlay isOpen={aiPauseVisible} copy={getAiPauseCopy(copyContext)} />
 
         {/* Recovery Modal - shows when session was interrupted */}
         {mode === 'recovery' && recoveryData && (
@@ -2168,6 +2261,7 @@ function App() {
             type={interventionType}
             mode={sessionModeForHUD}
             currentBandwidth={bandwidthEngine.current}
+            copyContext={copyContext}
             onDismiss={handleInterventionDismiss}
             onReset={handleInterventionAction}
           />
@@ -2225,6 +2319,7 @@ function App() {
         {/* Entry Point Panel */}
         {currentPanel === 'entryPoint' && (
           <PanelContainer isOpen={true}>
+            {nightPhase === 'after-midnight' && <AfterMidnightLine />}
             <EntryPointPanel
               onSelectQuickStart={handleSelectQuickStart}
               onSelectPreset={handleSelectPreset}
@@ -2291,6 +2386,15 @@ function App() {
           />
         )}
 
+        {currentPanel === 'settings' && (
+          <SettingsPanelAdapter
+            isOpen={true}
+            preferences={preferences}
+            onChange={updatePreferences}
+            onClose={handleClosePanel}
+          />
+        )}
+
         {currentPanel === 'reset' && (
           <ResetPanelAdapter
             isOpen={true}
@@ -2299,6 +2403,7 @@ function App() {
             onRitualComplete={handleRitualComplete}
             sessionMode={sessionModeForHUD}
             context={resetContext}
+            copyContext={copyContext}
           />
         )}
 
