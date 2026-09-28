@@ -565,19 +565,30 @@ pub trait PlatformMonitor {
 
 ## 15. v0.3.0-dev: Absorbed Extension Features
 
-The Chrome extension is being retired; the desktop app is the one tool. Three of its behaviours now live in the app. Everything is local (SQLite `preferences` table, schema v3), nothing is forced, and the user can turn each piece off in the new Settings panel (gear on the idle HUD).
+The Chrome extension is being retired; the desktop app is the one tool. Its behaviours now live in the app. Everything is local (SQLite `preferences` and `night_events` tables, schema v4), nothing is forced, and the user can turn each piece off in the Settings panel (gear on the idle HUD).
 
-### 15.1 Night Mode
+### 15.1 Night Mode (three phases)
 
-- **Setting:** on by default, window editable, default 20:00 to 06:00.
-- **Phases inside the window** (`src/lib/night`): `wind-down` (window start to 22:00), `close-day` (22:00 to midnight), `after-midnight` (midnight to window end).
-- **Behaviour:** the HUD dims and desaturates; friction and focus-slipping copy shifts to wind-down wording ("Tomorrow, you will be grateful you rested."); passive decay is unchanged; the first idle moment after 22:00 offers a "close the day" reset once per day (dismissable, remembered per day in local storage); any session started after midnight shows a one-line nudge above the start flow. No blocking, no override timers.
+Ported from the extension's `night-mode.js` and the night-mode web client. Every behaviour below is a strong default with an escape hatch. Nothing locks the machine.
+
+- **Setting:** on by default. Four editable bounds, validated as a set on both sides (Rust `phase_bounds_in_order`, TypeScript `validatePhaseBounds`) so the phases always run in order around the clock: wind-down start (default 20:00), shutdown start (22:00), night protection start (00:00), night end (06:00). An "Allow emergency override" toggle (default on).
+- **Phase resolution** (`src/lib/night`): `getNightPhase` returns `day`, `wind-down`, `shutdown` or `night-protection`, handling windows that cross midnight at any boundary. Recomputed every 30 seconds in `src/hooks/useNightMode`.
+- **Wind-down (20:00 to 22:00):** the HUD dims and desaturates; intervention copy shifts to wind-down wording. At the first idle moment a card is offered once per evening: "Time to start winding down", the original's activity list (checkable, not saved) and "About N minutes to wind down", where N is 15 plus 5 per full hour of today's sessions, capped at 60, rounded to 5 (`estimateWindDownMinutes`; the original's "night activation" score does not exist in the app, so session load is the honest stand-in).
+- **Shutdown Protocol (22:00 to 00:00):** offered once per evening at the first idle moment, and available any time as the "Shutdown" reset type. Three steps of about five minutes: (1) close open tasks, listing today's session intentions from SQLite with Done / Carry to tomorrow (carried tasks become Parking Lot items flagged for the next session); (2) brain dump, one Parking Lot item per line; (3) the physical transition checklist ("Stand up from your desk", "Close your laptop (really)", "Take 3 deep breaths", "Move to a different room") with a "Completed N of M" line. Completion is recorded as a `shutdown_completed` night event so it is not offered again that evening.
+- **Night Protection (00:00 to 06:00):** a full-panel STOP screen appears when the app is open in the window (once per night), when a session start is requested, or on the first telemetry activity in the window during a session (once per night). It says "Opening your laptop now will make tomorrow worse." and "Your bandwidth was N when you stopped." (the last session-end bandwidth tonight, else today's calibration). Then "What's really going on?":
+  - *It is truly urgent*: the original's honesty questions, then a 30-minute emergency override with a visible countdown card under the HUD and a proper end screen ("Override ended. Close the laptop."). At most two overrides per night, counted from `night_events`; the Settings toggle can remove the option entirely.
+  - *I can't sleep*: the ported sleep techniques (4-7-8 breathing, body scan, tense and release, "still awake after 20 minutes") and calming exercises (5-4-3-2-1 grounding, box breathing, write it down). Percentages and claims from the originals were dropped.
+  - *It is habit, not need*: a one-line acknowledgement and "Close for tonight", which ends any session quietly and returns to the dimmed idle HUD.
+  - The X ("Not now") always closes the screen. If the STOP came from a session start request, dismissing lets the start proceed.
+- **Night drift multiplier:** during an active session, drift penalties are multiplied by phase, ported from the desktop agent: wind-down x1.2, shutdown x1.5, night protection x2.0. Gentle tone caps at x1.2. Applied in `calculateAppSwitchPenalty` / `calculateDomainPenalty` (`nightMultiplier` argument, wrapped once in App.tsx) and shown as the HUD tooltip ("Night multiplier active: drift costs x1.5 during shutdown.") so it is never a hidden rule.
+- **Insomnia line:** distinct nights in the last seven with an "I can't sleep" choice drive the original's graded wording ("You haven't reported sleep trouble this week." / one night / 2 nights / multiple nights), shown under a small "Nights" heading in the Progress panel and nowhere else. No advice, no medical language.
+- **Recording:** `night_events` rows (night date, kind, detail) for `wind_down_shown`, `shutdown_completed`, `protection_stop` (with its trigger), `override`, `cant_sleep`, `habit` and `session_end` (bandwidth). The night date is the evening's calendar date, so 01:30 belongs to the previous evening. Once-per-night gating flags live in `localStorage`.
 
 ### 15.2 Tone and Prompt Style
 
-- **Tone:** `gentle` | `standard` | `firm` (default standard). Gentle uses softer titles and actions and never escalates to a Flow-mode delay gate (penalties still apply). Firm uses direct wording and the existing escalation. Nudge thresholds are unchanged in every tone.
+- **Tone:** `gentle` | `standard` | `firm` (default standard). Gentle uses softer titles and actions, never escalates to a Flow-mode delay gate (penalties still apply) and caps the night multiplier at x1.2. Firm uses direct wording and the existing escalation. Nudge thresholds are unchanged in every tone.
 - **Prompt style:** `mindfulness` | `scientific` | `spiritual` (default mindfulness). Drives the reset prompt shown during a ritual, the reset panel subheading, the intervention message and the AI pause subtext. The spiritual variant is kept available but is not the default.
-- **Implementation:** one copy table in `src/lib/copy/index.ts` consumed by `InterventionOverlayAdapter`, `ResetPanelAdapter`, the night nudges and the AI pause overlay. App.tsx routes `getInterventionConfig` through a single tone-aware wrapper.
+- **Implementation:** one copy table in `src/lib/copy/index.ts` consumed by `InterventionOverlayAdapter`, `ResetPanelAdapter`, the night cards and panels and the AI pause overlay. App.tsx routes `getInterventionConfig` through a single tone-aware wrapper.
 
 ### 15.3 AI-Site Pause ("Hold. Stay here.")
 
@@ -585,10 +596,14 @@ The Chrome extension is being retired; the desktop app is the one tool. Three of
 - **Response:** a small non-blocking card under the HUD for about 6 seconds, at most once every 10 minutes (once per hour on gentle tone). These domains stay in the productive list.
 - **Platform:** macOS only for now. Tab URLs come from AppleScript (`telemetry/app_monitor.rs`); on Windows no tab events are emitted and the feature is silently absent (the settings toggle says so). Logic lives in `src/lib/telemetry/ai-sites.ts` and `src/hooks/useAiSitePause.ts`.
 
-### 15.4 Tests
+### 15.4 What is verified, and what is not
 
-- Rust: `storage/preferences.rs` unit tests (defaults, round trip, validation, sanitising, clear) plus the migration test asserts schema v3.
-- TypeScript: vitest (`npm test`) covers the copy table, the night window phases and the AI-site tracker.
+Verified by automated tests (run on Linux; `cargo test` in `src-tauri`, `npm test`, `npm run build`):
+
+- Rust: `storage/preferences.rs` (defaults, round trip with the new columns, rejection of malformed times and out-of-order phases, sanitising a hand-edited row, in-place upgrade of a v3 table, deserialising a v3-shaped payload); `storage/night.rs` (record and read back, per-night counts for the override limit and shutdown completion, distinct-night counts for the insomnia line, latest event, input rejection, clear); `storage/database.rs` (migrations idempotent at v4, and a v3 database upgraded to v4 keeping its preferences).
+- TypeScript (vitest): phase resolution across midnight with default and custom bounds, ordering validation, night date keys across day and month boundaries, multiplier selection and the gentle cap, the tooltip note, override limits and countdown arithmetic, the insomnia wording, the wind-down estimate, the copy table and the AI-site tracker.
+
+Not run on a Mac in this pass, so unverified end to end: the actual window resizing for the new `shutdown` and `nightProtection` panels and the taller wind-down card; the telemetry activity trigger firing from real app and tab switch events; the override countdown surviving an app restart (it is read back from `localStorage` on load, but this was not exercised in the packaged app); the Tauri IPC round trip for the five `night_events` commands (the storage functions behind them are tested, the commands are registered in `main.rs`, but no UI-driven call was made). Timing behaviour was tested with fixed dates, not by waiting through a real night.
 
 ---
 
@@ -616,7 +631,7 @@ The Chrome extension is being retired; the desktop app is the one tool. Three of
 | **AI Focus Coach** | Personalized recommendations |
 | **Team Analytics** | Manager dashboard |
 | **Calendar Integration** | Auto-block focus time |
-| **Browser Extension** | Retired; its night mode, tone/style and AI pause now live in the app (see section 15) |
+| **Browser Extension** | Retired; its three-phase night mode, tone/style and AI pause now live in the app (see section 15) |
 | **Mobile Companion** | Break reminders, stats |
 | **Wearable Integration** | HRV-based calibration |
 
