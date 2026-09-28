@@ -21,6 +21,7 @@ export function FloatingHUD({
   onOpenParkingLot,
   onReset,
   onOpenHistory,
+  onOpenSettings,
 }: FloatingHUDProps) {
   const bandwidthValue = bandwidthScore ?? 0
   const bandwidthColor = getBandwidthColor(bandwidthScore)
@@ -182,6 +183,20 @@ export function FloatingHUD({
               title="Parking Lot"
             >
               ☰
+            </button>
+          )}
+
+          {/* Settings: night mode, tone, prompt style, AI-site pause */}
+          {(mode === "idle" || mode === "estimated") && onOpenSettings && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenSettings()
+              }}
+              className="w-8 h-8 rounded-full bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 flex items-center justify-center text-zinc-300 text-xs transition-colors"
+              title="Settings"
+            >
+              ⚙
             </button>
           )}
 

@@ -37,6 +37,7 @@ export type PanelType =
   
   // Other Panels
   | 'calibration'
+  | 'settings'
   | 'reset'
   | 'parkingLot'
   | 'endSession'
@@ -102,6 +103,7 @@ export const OVERLAY_PANELS: PanelType[] = [
 // Panels that are full-screen replacements (hide HUD)
 export const FULLSCREEN_PANELS: PanelType[] = [
   'calibration',
+  'settings',
   'preSession',
   'savePrompt',
   'reset',

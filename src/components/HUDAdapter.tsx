@@ -18,6 +18,8 @@ interface HUDAdapterProps {
   // Streak display
   streakCount?: number
   isStreakAtRisk?: boolean
+  // Night mode: soften the HUD inside the night window
+  dimmed?: boolean
   
   // Callbacks
   onStartSession: () => void
@@ -41,6 +43,7 @@ export function HUDAdapter({
   isInFlow,
   streakCount,
   isStreakAtRisk,
+  dimmed = false,
   onStartSession,
   onPauseSession,
   onResumeSession,
@@ -99,7 +102,11 @@ export function HUDAdapter({
     <div 
       data-drag-region
       onMouseDown={handleDragStart}
-      className="cursor-grab active:cursor-grabbing"
+      className="cursor-grab active:cursor-grabbing transition-all duration-1000"
+      style={{
+        opacity: dimmed ? 0.72 : 1,
+        filter: dimmed ? 'saturate(0.7) brightness(0.9)' : undefined,
+      }}
     >
       <FloatingHUD
         isCalibratedToday={isCalibrated}

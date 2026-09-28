@@ -3,6 +3,7 @@
 
 import { InterventionOverlay } from '@/features/desktop/overlays/InterventionOverlay'
 import type { SessionMode } from '@/features/desktop/hud/FloatingHUD/types'
+import { getInterventionCopy, DEFAULT_COPY_CONTEXT, type CopyContext } from '@/lib/copy'
 
 // Map our simplified types to the overlay's type system
 type InterventionType = 'friction' | 'focus-slipping'
@@ -12,6 +13,8 @@ interface InterventionOverlayAdapterProps {
   type: InterventionType
   mode: SessionMode
   currentBandwidth: number
+  /** Tone, prompt style and night phase for the wording */
+  copyContext?: CopyContext
   onDismiss: () => void
   onReset: () => void
 }
@@ -40,6 +43,7 @@ export function InterventionOverlayAdapter({
   type,
   mode,
   currentBandwidth,
+  copyContext = DEFAULT_COPY_CONTEXT,
   onDismiss,
   onReset,
 }: InterventionOverlayAdapterProps) {
@@ -48,6 +52,7 @@ export function InterventionOverlayAdapter({
   // Map our type to the overlay's expected type
   // The overlay uses 'focus-slipping' for stronger warnings
   const overlayType = type === 'focus-slipping' ? 'focus-slipping' : 'friction'
+  const copy = getInterventionCopy(overlayType, mode, copyContext)
   
   // For Legend mode, the overlay itself renders fullscreen
   // For Zen/Flow, we wrap it in a container
@@ -60,6 +65,7 @@ export function InterventionOverlayAdapter({
         details={{
           duration: currentBandwidth, // Pass bandwidth for context
         }}
+        copy={copy}
         onDismiss={onDismiss}
         onAction={onReset}
       />
@@ -75,6 +81,7 @@ export function InterventionOverlayAdapter({
       details={{
         duration: currentBandwidth,
       }}
+      copy={copy}
       onDismiss={onDismiss}
       onAction={onReset}
     />

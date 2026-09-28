@@ -11,6 +11,12 @@ export interface InterventionOverlayProps {
     tabCount?: number
     duration?: number
   }
+  /** Copy from the tone/prompt-style table; falls back to the built-in text */
+  copy?: {
+    title: string
+    message: string
+    action: string
+  }
   onDismiss: () => void
   onAction?: () => void
 }

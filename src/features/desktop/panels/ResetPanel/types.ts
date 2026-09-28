@@ -20,4 +20,10 @@ export interface ResetPanelProps {
   onSelectRitual: (ritualType: RitualType) => void
   onRitualComplete?: (data: RitualCompletionData) => void  // Called when ritual actually finishes
   sessionMode?: "Zen" | "Flow" | "Legend"
+  /** Wording from the tone/prompt-style table; falls back to the built-in text */
+  copy?: {
+    heading: string
+    subheading: string
+    prompt: string
+  }
 }

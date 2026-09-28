@@ -74,10 +74,10 @@ const INTERVENTION_CONFIG = {
   },
 }
 
-export function InterventionOverlay({ isOpen, type, mode, details, onDismiss, onAction }: InterventionOverlayProps) {
+export function InterventionOverlay({ isOpen, type, mode, details, copy, onDismiss, onAction }: InterventionOverlayProps) {
   const [flowAnimationStage, setFlowAnimationStage] = useState<"exploding" | "moving">("exploding")
 
-  const config = INTERVENTION_CONFIG[type]?.[mode] || {
+  const config = copy || INTERVENTION_CONFIG[type]?.[mode] || {
     title: "Intervention",
     message: "Take a moment to refocus.",
     action: "Continue",

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react"
 import type { ResetPanelProps, RitualType, RitualOption, RitualCompletionData } from "./types"
 import { TimerHalo } from "@/components/animations/TimerHalo"
 
-export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, sessionMode = "Zen" }: ResetPanelProps) {
+export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, sessionMode = "Zen", copy }: ResetPanelProps) {
   const [activeRitual, setActiveRitual] = useState<RitualType | null>(null)
   const [timeRemaining, setTimeRemaining] = useState(0)
   
@@ -120,6 +120,9 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
               <p className="text-sm text-zinc-400 mt-2">
                 {ritualOptions.find((r) => r.id === activeRitual)?.description}
               </p>
+              {copy?.prompt && (
+                <p className="text-xs text-emerald-200/70 italic mt-3 px-4 leading-relaxed">{copy.prompt}</p>
+              )}
             </div>
 
             {/* Centered countdown with pulse ring animation */}
@@ -140,8 +143,8 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
           // Ritual selection view
           <div className="space-y-6">
             <div className="text-center">
-              <h2 className="text-xl font-light text-emerald-400">Choose Your Reset</h2>
-              <p className="text-sm text-zinc-400 mt-2">Take a moment to recharge and return focused</p>
+              <h2 className="text-xl font-light text-emerald-400">{copy?.heading ?? "Choose Your Reset"}</h2>
+              <p className="text-sm text-zinc-400 mt-2">{copy?.subheading ?? "Take a moment to recharge and return focused"}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

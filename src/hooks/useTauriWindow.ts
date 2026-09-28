@@ -18,6 +18,7 @@ export const PANEL_DIMENSIONS = {
   parkingLotHarvest: { width: 660, height: 720 },// Harvest panel
   postSessionSummary: { width: 640, height: 850 },// Session summary (with bandwidth impact)
   progress: { width: 640, height: 860 },         // Progress dashboard (trends + weekly summary)
+  settings: { width: 520, height: 720 },         // Settings (night mode, tone, prompt style, AI pause)
   sessionReflection: { width: 600, height: 640 },// Reflection questions (increased)
   flowCelebration: { width: 540, height: 300 },  // Flow celebration
   endSession: { width: 560, height: 680 },       // End session modal (taller for expanded sub-options)

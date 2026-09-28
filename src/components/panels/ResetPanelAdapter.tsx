@@ -5,6 +5,8 @@ import { PanelContainer } from '@/components/PanelContainer'
 import { ResetPanel } from '@/features/desktop/panels/ResetPanel'
 import type { RitualType, RitualCompletionData } from '@/features/desktop/panels/ResetPanel/types'
 import type { SessionMode } from '@/features/desktop/hud/FloatingHUD/types'
+import { useMemo } from 'react'
+import { getResetPanelCopy, NIGHT_COPY, DEFAULT_COPY_CONTEXT, type CopyContext } from '@/lib/copy'
 
 interface ResetPanelAdapterProps {
   isOpen: boolean
@@ -13,9 +15,11 @@ interface ResetPanelAdapterProps {
   onRitualComplete?: (data: RitualCompletionData) => void
   sessionMode?: SessionMode
   /** Why the panel opened: 'critical' hard stop, 'landing' after a rough
-   *  session ending, 'pre-meeting' ahead of a calendar event, or null for
-   *  a user-initiated reset */
-  context?: 'critical' | 'landing' | 'pre-meeting' | null
+   *  session ending, 'pre-meeting' ahead of a calendar event, 'close-day'
+   *  from the night mode nudge, or null for a user-initiated reset */
+  context?: 'critical' | 'landing' | 'pre-meeting' | 'close-day' | null
+  /** Tone, prompt style and night phase for the wording */
+  copyContext?: CopyContext
 }
 
 /**
@@ -41,7 +45,11 @@ export function ResetPanelAdapter({
   onRitualComplete,
   sessionMode = 'Flow',
   context = null,
+  copyContext = DEFAULT_COPY_CONTEXT,
 }: ResetPanelAdapterProps) {
+  // One prompt per opening of the panel, not one per render
+  const seed = useMemo(() => Date.now() / 60000, [])
+  const copy = getResetPanelCopy(copyContext, seed)
 
   const handleSelectRitual = (ritualType: RitualType) => {
     // Notify that ritual started (no bonus awarded yet!)
@@ -70,6 +78,16 @@ export function ResetPanelAdapter({
           </p>
         </div>
       )}
+      {context === 'close-day' && (
+        <div className="mb-3 p-3 rounded-xl border border-indigo-400/40 bg-indigo-500/10">
+          <p className="text-sm text-indigo-200 font-light">
+            {NIGHT_COPY.closeDayTitle}
+          </p>
+          <p className="text-xs text-zinc-400 mt-1">
+            {NIGHT_COPY.closeDayBody}
+          </p>
+        </div>
+      )}
       {context === 'landing' && (
         <div className="mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
           <p className="text-sm text-cyan-300 font-light">
@@ -86,6 +104,7 @@ export function ResetPanelAdapter({
         onSelectRitual={handleSelectRitual}
         onRitualComplete={onRitualComplete}
         sessionMode={sessionMode}
+        copy={copy}
       />
     </PanelContainer>
   )
