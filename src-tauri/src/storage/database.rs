@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 use crate::telemetry::persistence::init_telemetry_tables;
 
 #[allow(dead_code)]
-const CURRENT_SCHEMA_VERSION: i32 = 1;
+const CURRENT_SCHEMA_VERSION: i32 = 4;
 
 /// Get the path to the SQLite database file.
 /// Creates the app data directory if it doesn't exist.
@@ -78,6 +78,24 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
         migrate_v3(conn)?;
     }
 
+    // Migration v4: three-phase night mode (phase bounds, emergency override
+    // toggle) and the night_events table
+    if current_version < 4 {
+        migrate_v4(conn)?;
+    }
+
+    Ok(())
+}
+
+/// Migration v4: full night mode. Adds shutdown_start, protection_start and
+/// emergency_override_enabled to preferences (idempotent column checks) and
+/// creates night_events.
+fn migrate_v4(conn: &Connection) -> Result<(), String> {
+    super::preferences::init_preferences_table(conn)?;
+    super::preferences::ensure_night_phase_columns(conn)?;
+    super::night::init_night_table(conn)?;
+    conn.execute("UPDATE schema_version SET version = 4", [])
+        .map_err(|e| format!("Failed to update schema version: {}", e))?;
     Ok(())
 }
 
@@ -282,12 +300,74 @@ mod tests {
         assert!(tables.contains(&"recovery_data".to_string()));
         assert!(tables.contains(&"user_data".to_string()));
         assert!(tables.contains(&"preferences".to_string()));
+        assert!(tables.contains(&"night_events".to_string()));
         assert!(tables.contains(&"schema_version".to_string()));
 
         let version: i32 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_migration_v3_to_v4_keeps_preferences_and_adds_night_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+
+        // Build a database as v0.3.0-dev left it: schema v3, six-column
+        // preferences table with a saved row, no night_events table.
+        conn.execute(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY)",
+            [],
+        )
+        .unwrap();
+        migrate_v1(&conn).unwrap();
+        init_telemetry_tables(&conn).unwrap();
+        migrate_v2(&conn).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE preferences (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                night_mode_enabled INTEGER NOT NULL DEFAULT 1,
+                night_mode_start TEXT NOT NULL DEFAULT '20:00',
+                night_mode_end TEXT NOT NULL DEFAULT '06:00',
+                tone TEXT NOT NULL DEFAULT 'standard',
+                prompt_style TEXT NOT NULL DEFAULT 'mindfulness',
+                ai_pause_enabled INTEGER NOT NULL DEFAULT 1
+            );
+            INSERT INTO preferences (id, night_mode_enabled, night_mode_start, night_mode_end, tone, prompt_style, ai_pause_enabled)
+            VALUES (1, 1, '21:00', '07:00', 'gentle', 'scientific', 0);
+            UPDATE schema_version SET version = 3;
+            "#,
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let version: i32 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+
+        let prefs = super::super::preferences::get_preferences(&conn).unwrap();
+        assert_eq!(prefs.tone, "gentle");
+        assert_eq!(prefs.prompt_style, "scientific");
+        assert!(!prefs.ai_pause_enabled);
+        assert_eq!(prefs.night_mode_start, "21:00");
+        assert_eq!(prefs.night_mode_end, "07:00");
+        assert_eq!(prefs.shutdown_start, "22:00");
+        assert_eq!(prefs.protection_start, "00:00");
+        assert!(prefs.emergency_override_enabled);
+
+        // night_events is usable straight after the migration
+        super::super::night::record_night_event(&conn, "2026-01-15", "habit", None).unwrap();
+        assert_eq!(
+            super::super::night::count_night_events(&conn, "2026-01-15", "habit").unwrap(),
+            1
+        );
+
+        // Running again is a no-op
+        run_migrations(&conn).unwrap();
     }
 
     #[test]
