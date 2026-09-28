@@ -4,7 +4,8 @@ import {
   getNightPhase,
   parseClock,
   validatePhaseBounds,
-  nightDateKey,
+  nightKey,
+  minutesToClock,
   dateKeyDaysAgo,
   getNightMultiplier,
   getNightMultiplierNote,
@@ -93,15 +94,38 @@ describe('three phases', () => {
   })
 })
 
-describe('night date keys', () => {
-  it('keeps one key from the evening through the small hours', () => {
-    expect(nightDateKey(new Date(2026, 0, 15, 20, 30))).toBe('2026-01-15')
-    expect(nightDateKey(new Date(2026, 0, 15, 23, 59))).toBe('2026-01-15')
-    expect(nightDateKey(new Date(2026, 0, 16, 0, 0))).toBe('2026-01-15')
-    expect(nightDateKey(new Date(2026, 0, 16, 5, 59))).toBe('2026-01-15')
-    expect(nightDateKey(new Date(2026, 0, 16, 12, 0))).toBe('2026-01-16')
+describe('night keys', () => {
+  it('keeps one key from the evening through the small hours when the night crosses midnight', () => {
+    expect(nightKey(new Date(2026, 0, 15, 20, 30), settings)).toBe('2026-01-15')
+    expect(nightKey(new Date(2026, 0, 15, 23, 59), settings)).toBe('2026-01-15')
+    expect(nightKey(new Date(2026, 0, 16, 0, 0), settings)).toBe('2026-01-15')
+    expect(nightKey(new Date(2026, 0, 16, 5, 59), settings)).toBe('2026-01-15')
+    // The night ends at 06:00; from then on the key is the new day's night
+    expect(nightKey(new Date(2026, 0, 16, 6, 0), settings)).toBe('2026-01-16')
+    expect(nightKey(new Date(2026, 0, 16, 12, 0), settings)).toBe('2026-01-16')
     // Month boundary
-    expect(nightDateKey(new Date(2026, 1, 1, 2, 0))).toBe('2026-01-31')
+    expect(nightKey(new Date(2026, 1, 1, 2, 0), settings)).toBe('2026-01-31')
+  })
+
+  it('follows the derived night, not the calendar date', () => {
+    // A night shift's "night" of 08:00 to 18:00 sits inside one date
+    const shifted = { nightModeStart: '08:00', shutdownStart: '10:00', protectionStart: '12:00', nightModeEnd: '18:00' }
+    expect(nightKey(new Date(2026, 0, 16, 1, 0), shifted)).toBe('2026-01-16')
+    expect(nightKey(new Date(2026, 0, 16, 9, 0), shifted)).toBe('2026-01-16')
+    expect(nightKey(new Date(2026, 0, 16, 23, 0), shifted)).toBe('2026-01-16')
+    // A day shift's night of 18:00 to 08:00 crosses midnight later than the standard one
+    const late = { nightModeStart: '18:00', shutdownStart: '20:00', protectionStart: '22:00', nightModeEnd: '08:00' }
+    expect(nightKey(new Date(2026, 0, 16, 7, 59), late)).toBe('2026-01-15')
+    expect(nightKey(new Date(2026, 0, 16, 8, 0), late)).toBe('2026-01-16')
+    // Malformed bounds: the calendar date
+    expect(nightKey(new Date(2026, 0, 16, 1, 0), { ...settings, nightModeEnd: 'dawn' })).toBe('2026-01-16')
+  })
+
+  it('formats minutes back to the clock, wrapping around', () => {
+    expect(minutesToClock(0)).toBe('00:00')
+    expect(minutesToClock(8 * 60 + 5)).toBe('08:05')
+    expect(minutesToClock(25 * 60)).toBe('01:00')
+    expect(minutesToClock(-60)).toBe('23:00')
   })
 
   it('computes rolling window starts', () => {

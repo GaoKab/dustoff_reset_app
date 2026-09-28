@@ -4,19 +4,22 @@
 // emergency override countdown and the night event recording. App.tsx
 // composes this with session state and rendering.
 //
-// Gating flags live in localStorage keyed by the night date; events that
+// Gating flags live in localStorage keyed by the night key; events that
 // should survive and be counted (overrides, choices, shutdown completion,
 // session-end bandwidth) go to SQLite through the night event bridge.
+//
+// The phase and the night key come from one accessor, resolveNight in
+// src/lib/night/schedule.ts, which derives the bounds from the person's
+// work schedule (or the explicit override). Nothing here reads the four
+// phase fields directly, so there is no second source of truth.
 
 import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react'
 import { tauriBridge } from '@/lib/tauri-bridge'
 import type { Preferences } from '@/lib/preferences/types'
 import type { NightEventKind } from '@/lib/tauri-types'
 import {
-  getNightPhase,
   getNightMultiplier,
   getNightMultiplierNote,
-  nightDateKey,
   localDateKey,
   estimateWindDownMinutes,
   canStartOverride,
@@ -24,6 +27,7 @@ import {
   OVERRIDE_MINUTES,
   type NightPhase,
 } from '@/lib/night'
+import { nightPhaseFor, nightKeyFor } from '@/lib/night/schedule'
 
 export type ProtectionTrigger = 'app_open' | 'session_start' | 'activity' | 'override_ended'
 
@@ -74,39 +78,34 @@ interface UseNightModeArgs {
 export function useNightMode({ preferences, preferencesRef, ready, sessionActive, calibrationScore }: UseNightModeArgs) {
   // ---------- phase tick ----------
   const [nightPhase, setNightPhase] = useState<NightPhase>('day')
-  const [nightKey, setNightKey] = useState(() => nightDateKey(new Date()))
+  const [nightKey, setNightKey] = useState(() => nightKeyFor(new Date(), preferencesRef.current))
   useEffect(() => {
     const compute = () => {
       const now = new Date()
-      setNightPhase(getNightPhase(now, preferences))
-      setNightKey(nightDateKey(now))
+      setNightPhase(nightPhaseFor(now, preferences))
+      setNightKey(nightKeyFor(now, preferences))
     }
     compute()
     const tick = setInterval(compute, 30 * 1000)
     return () => clearInterval(tick)
-  }, [
-    preferences.nightModeEnabled,
-    preferences.nightModeStart,
-    preferences.shutdownStart,
-    preferences.protectionStart,
-    preferences.nightModeEnd,
-  ])
+    // Any preference change may move the bounds (mode, hours, days, override)
+  }, [preferences])
 
   /** Current multiplier from the live preferences and clock (for long-lived callbacks) */
   const multiplierNow = useCallback(() => {
     const p = preferencesRef.current
-    return getNightMultiplier(getNightPhase(new Date(), p), p.tone)
+    return getNightMultiplier(nightPhaseFor(new Date(), p), p.tone)
   }, [preferencesRef])
 
   const nightNote = getNightMultiplierNote(nightPhase, preferences.tone)
 
   // ---------- event helpers ----------
   const record = useCallback((kind: NightEventKind, detail?: string) => {
-    const key = nightDateKey(new Date())
+    const key = nightKeyFor(new Date(), preferencesRef.current)
     tauriBridge.recordNightEvent(key, kind, detail).catch(err =>
       console.log('[Night] Could not record event', kind, err)
     )
-  }, [])
+  }, [preferencesRef])
 
   const closedForTonight = readKey(KEYS.closedForTonight) === nightKey
 
@@ -158,8 +157,13 @@ export function useNightMode({ preferences, preferencesRef, ready, sessionActive
   }, [nightKey, dismissShutdownNudge, record])
 
   // ---------- emergency override ----------
-  const [overrideUntil, setOverrideUntil] = useState<number | null>(() => readOverride(nightDateKey(new Date())))
+  const [overrideUntil, setOverrideUntil] = useState<number | null>(() => readOverride(nightKeyFor(new Date(), preferencesRef.current)))
   const [overrideSeconds, setOverrideSeconds] = useState(0)
+  // Preferences load after the first render, and the schedule can move the
+  // night key, so a stored override is looked up again once the key settles.
+  useEffect(() => {
+    setOverrideUntil(current => current ?? readOverride(nightKey))
+  }, [nightKey])
   const [overrideUsedTonight, setOverrideUsedTonight] = useState(0)
   useEffect(() => {
     if (!ready) return
@@ -254,8 +258,8 @@ export function useNightMode({ preferences, preferencesRef, ready, sessionActive
   const noteActivity = useCallback(() => {
     const p = preferencesRef.current
     const now = new Date()
-    if (getNightPhase(now, p) !== 'night-protection') return
-    const key = nightDateKey(now)
+    if (nightPhaseFor(now, p) !== 'night-protection') return
+    const key = nightKeyFor(now, p)
     if (activityShownRef.current === key) return
     if (readOverride(key) !== null) return
     if (readKey(KEYS.closedForTonight) === key) return

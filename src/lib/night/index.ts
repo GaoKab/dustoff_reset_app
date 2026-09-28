@@ -39,8 +39,8 @@ export function isWithinNightWindow(now: Date, start: string, end: string): bool
   return minutes >= s || minutes < e
 }
 
-export interface NightSettings {
-  nightModeEnabled: boolean
+/** The four phase bounds, "HH:MM" each. */
+export interface PhaseBounds {
   /** Wind-down starts here. Also the start of the whole night window. */
   nightModeStart: string
   /** Shutdown protocol phase starts here. */
@@ -49,6 +49,15 @@ export interface NightSettings {
   protectionStart: string
   /** Night protection ends here. Also the end of the night window. */
   nightModeEnd: string
+}
+
+/**
+ * What the phase resolver needs: the bounds plus an on/off. The app never
+ * builds this by hand from preferences; `resolveNight` in ./schedule is the
+ * one accessor that turns the schedule into these settings.
+ */
+export interface NightSettings extends PhaseBounds {
+  nightModeEnabled: boolean
 }
 
 export const DEFAULT_NIGHT_SETTINGS: NightSettings = {
@@ -60,8 +69,14 @@ export const DEFAULT_NIGHT_SETTINGS: NightSettings = {
 }
 
 /** Minutes from `start` forward around the clock to `clock`, in [0, 1440). */
-function offsetFrom(start: number, clock: number): number {
+export function offsetFrom(start: number, clock: number): number {
   return (((clock - start) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+}
+
+/** Minutes since midnight back to "HH:MM", wrapping around the clock. */
+export function minutesToClock(minutes: number): string {
+  const m = ((minutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 }
 
 /**
@@ -69,7 +84,7 @@ function offsetFrom(start: number, clock: number): number {
  * then shutdown, then night protection, then the end. Mirrors the Rust
  * validation in storage/preferences.rs. Returns a reason or null when fine.
  */
-export function validatePhaseBounds(settings: Pick<NightSettings, 'nightModeStart' | 'shutdownStart' | 'protectionStart' | 'nightModeEnd'>): string | null {
+export function validatePhaseBounds(settings: PhaseBounds): string | null {
   const s = parseClock(settings.nightModeStart)
   const sd = parseClock(settings.shutdownStart)
   const p = parseClock(settings.protectionStart)
@@ -123,14 +138,28 @@ export function localDateKey(now: Date): string {
 }
 
 /**
- * The evening a moment belongs to. Anything before noon counts as the
- * previous evening, so 01:30 on the 16th and 23:00 on the 15th share the
- * key "…-15". Used to gate "once per night" behaviour and to key night
- * events in SQLite.
+ * The night a moment belongs to, as the local date on which that night's
+ * window starts (or started). Used to gate "once per night" behaviour and
+ * to key night events in SQLite, so it must follow the person's derived
+ * night, not the calendar date:
+ *
+ * - A window that crosses midnight (20:00 to 06:00): anything before the
+ *   window's end belongs to the previous date, so 01:30 on the 16th and
+ *   23:00 on the 15th share the key "…-15", and 06:00 on the 16th starts
+ *   the 16th's night.
+ * - A window inside one day (a night-shift "night" of 08:00 to 18:00):
+ *   the key is simply that date.
+ *
+ * Malformed bounds fall back to the calendar date.
  */
-export function nightDateKey(now: Date): string {
+export function nightKey(now: Date, bounds: PhaseBounds): string {
+  const start = parseClock(bounds.nightModeStart)
+  const end = parseClock(bounds.nightModeEnd)
   const d = new Date(now)
-  if (d.getHours() < 12) d.setDate(d.getDate() - 1)
+  if (start !== null && end !== null && start > end) {
+    const minutes = now.getHours() * 60 + now.getMinutes()
+    if (minutes < end) d.setDate(d.getDate() - 1)
+  }
   return localDateKey(d)
 }
 
