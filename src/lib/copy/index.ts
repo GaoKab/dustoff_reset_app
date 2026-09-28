@@ -215,6 +215,7 @@ export const NIGHT_COPY = {
     'Set out tomorrow\'s clothes',
   ],
   windDownDismiss: 'Got it',
+  lateStartLine: 'It is late. Start if you need to. A shorter one might serve you better.',
 
   // Shutdown protocol (default 22:00 to 00:00)
   shutdownNudgeTitle: 'Close the day?',

@@ -20,6 +20,8 @@ export interface PenaltyResult {
   basePenalty: number
   modeWeight: number
   escalationMultiplier: number
+  /** Night mode drift multiplier (1 by day; 1.2 / 1.5 / 2.0 by night phase) */
+  nightMultiplier: number
   finalPenalty: number
   category: AppCategory
   penaltyType: string
@@ -71,7 +73,8 @@ export function calculateAppSwitchPenalty(
   toApp: ActiveAppInfo,
   mode: Mode,
   offenseNumber: number,
-  isWhitelisted: boolean = false
+  isWhitelisted: boolean = false,
+  nightMultiplier: number = 1
 ): PenaltyResult {
   // Get category
   const category = getAppCategory(toApp)
@@ -83,6 +86,7 @@ export function calculateAppSwitchPenalty(
       basePenalty: 0,
       modeWeight: 1,
       escalationMultiplier: 1,
+      nightMultiplier: 1,
       finalPenalty: 0,
       category: AppCategory.PRODUCTIVE,
       penaltyType: 'dustoff_reset',
@@ -96,6 +100,7 @@ export function calculateAppSwitchPenalty(
       basePenalty: 0,
       modeWeight: 1,
       escalationMultiplier: 1,
+      nightMultiplier: 1,
       finalPenalty: 0,
       category,
       penaltyType: 'whitelisted',
@@ -109,6 +114,7 @@ export function calculateAppSwitchPenalty(
       basePenalty: 0,
       modeWeight: 1,
       escalationMultiplier: 1,
+      nightMultiplier: 1,
       finalPenalty: 0,
       category,
       penaltyType: 'productive',
@@ -128,15 +134,18 @@ export function calculateAppSwitchPenalty(
     ? getEscalationMultiplier(offenseNumber)
     : 1.0
   
-  // Calculate final penalty
+  // Calculate final penalty. The night multiplier comes from src/lib/night
+  // (wind-down 1.2, shutdown 1.5, night protection 2.0; gentle tone caps
+  // at 1.2) and is 1 by day, so daytime sessions are unchanged.
   const finalPenalty = Math.round(
-    basePenalty * modeWeight * escalationMultiplier * 10
+    basePenalty * modeWeight * escalationMultiplier * nightMultiplier * 10
   ) / 10
   
   return {
     basePenalty,
     modeWeight,
     escalationMultiplier,
+    nightMultiplier,
     finalPenalty,
     category,
     penaltyType: penaltyKey,
@@ -151,7 +160,8 @@ export function calculateDomainPenalty(
   domain: string | null,
   mode: Mode,
   offenseNumber: number,
-  isWhitelisted: boolean = false
+  isWhitelisted: boolean = false,
+  nightMultiplier: number = 1
 ): PenaltyResult {
   // Get category from domain
   const category = getDomainCategory(domain)
@@ -163,6 +173,7 @@ export function calculateDomainPenalty(
       basePenalty: 0,
       modeWeight: 1,
       escalationMultiplier: 1,
+      nightMultiplier: 1,
       finalPenalty: 0,
       category,
       penaltyType: 'whitelisted_domain',
@@ -176,6 +187,7 @@ export function calculateDomainPenalty(
       basePenalty: 0,
       modeWeight: 1,
       escalationMultiplier: 1,
+      nightMultiplier: 1,
       finalPenalty: 0,
       category,
       penaltyType: category === AppCategory.PRODUCTIVE ? 'productive_domain' : 'neutral_domain',
@@ -209,15 +221,18 @@ export function calculateDomainPenalty(
     ? getEscalationMultiplier(offenseNumber)
     : 1.0
   
-  // Calculate final penalty
+  // Calculate final penalty. The night multiplier comes from src/lib/night
+  // (wind-down 1.2, shutdown 1.5, night protection 2.0; gentle tone caps
+  // at 1.2) and is 1 by day, so daytime sessions are unchanged.
   const finalPenalty = Math.round(
-    basePenalty * modeWeight * escalationMultiplier * 10
+    basePenalty * modeWeight * escalationMultiplier * nightMultiplier * 10
   ) / 10
   
   return {
     basePenalty,
     modeWeight,
     escalationMultiplier,
+    nightMultiplier,
     finalPenalty,
     category,
     penaltyType,

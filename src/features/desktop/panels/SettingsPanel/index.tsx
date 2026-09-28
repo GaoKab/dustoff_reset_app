@@ -1,8 +1,10 @@
 // src/features/desktop/panels/SettingsPanel/index.tsx
-// Settings absorbed from the retired Chrome extension: night mode window,
-// tone, prompt style and the AI-site pause. Everything is stored locally.
+// Settings absorbed from the retired Chrome extension: the three night
+// phases with editable bounds, the emergency override, tone, prompt style
+// and the AI-site pause. Everything is stored locally.
 
-import { X, Moon, MessageCircle, Sparkles, Hourglass } from 'lucide-react'
+import { useState } from 'react'
+import { X, Moon, MessageCircle, Sparkles, Hourglass, Clock } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import {
   TONES,
@@ -11,6 +13,7 @@ import {
   type Tone,
   type PromptStyle,
 } from '@/lib/preferences/types'
+import { validatePhaseBounds } from '@/lib/night'
 
 interface SettingsPanelProps {
   preferences: Preferences
@@ -82,8 +85,45 @@ function SectionTitle({ icon, title, hint }: { icon: React.ReactNode; title: str
   )
 }
 
+type BoundKey = 'nightModeStart' | 'shutdownStart' | 'protectionStart' | 'nightModeEnd'
+
+function PhaseRow({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string
+  value: string
+  disabled: boolean
+  onChange: (v: string) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <label className="text-xs text-zinc-400">{label}</label>
+      <input
+        type="time"
+        value={value}
+        disabled={disabled}
+        onChange={e => e.target.value && onChange(e.target.value)}
+        className="bg-[#0a0f0d]/80 border border-zinc-700 rounded-md px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
+      />
+    </div>
+  )
+}
+
 export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelProps) {
   const aiPauseAvailable = isMacOS()
+  const [boundsError, setBoundsError] = useState<string | null>(null)
+
+  // Phase bounds are validated as a set before saving, mirroring the Rust
+  // side, so a single edit can never leave the phases out of order.
+  const changeBound = (key: BoundKey, value: string) => {
+    const next = { ...preferences, [key]: value }
+    const problem = validatePhaseBounds(next)
+    setBoundsError(problem)
+    if (!problem) onChange({ [key]: value })
+  }
 
   return (
     <div className="w-[475px] rounded-3xl bg-[#0a0f0d]/55 backdrop-blur-xl border border-emerald-500/30 shadow-2xl overflow-hidden">
@@ -108,7 +148,7 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
             <SectionTitle
               icon={<Moon className="w-4 h-4" />}
               title="Night mode"
-              hint="The HUD softens and nudges shift to winding down."
+              hint="Three phases: wind-down softens the HUD, shutdown offers a 15 minute close, night protection asks before you start."
             />
             <Switch
               checked={preferences.nightModeEnabled}
@@ -117,24 +157,51 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
               aria-label="Night mode"
             />
           </div>
-          <div className={`flex items-center gap-3 pl-10 ${preferences.nightModeEnabled ? '' : 'opacity-50'}`}>
-            <label className="text-xs text-zinc-400">From</label>
-            <input
-              type="time"
+          <div className={`pl-10 space-y-2 ${preferences.nightModeEnabled ? '' : 'opacity-50'}`}>
+            <PhaseRow
+              label="Wind-down from"
               value={preferences.nightModeStart}
               disabled={!preferences.nightModeEnabled}
-              onChange={e => e.target.value && onChange({ nightModeStart: e.target.value })}
-              className="bg-[#0a0f0d]/80 border border-zinc-700 rounded-md px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
+              onChange={v => changeBound('nightModeStart', v)}
             />
-            <label className="text-xs text-zinc-400">to</label>
-            <input
-              type="time"
+            <PhaseRow
+              label="Shutdown from"
+              value={preferences.shutdownStart}
+              disabled={!preferences.nightModeEnabled}
+              onChange={v => changeBound('shutdownStart', v)}
+            />
+            <PhaseRow
+              label="Night protection from"
+              value={preferences.protectionStart}
+              disabled={!preferences.nightModeEnabled}
+              onChange={v => changeBound('protectionStart', v)}
+            />
+            <PhaseRow
+              label="Night ends at"
               value={preferences.nightModeEnd}
               disabled={!preferences.nightModeEnabled}
-              onChange={e => e.target.value && onChange({ nightModeEnd: e.target.value })}
-              className="bg-[#0a0f0d]/80 border border-zinc-700 rounded-md px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
+              onChange={v => changeBound('nightModeEnd', v)}
             />
+            {boundsError && (
+              <p className="text-xs text-amber-300/90 leading-snug">{boundsError} The previous times are kept.</p>
+            )}
           </div>
+        </div>
+
+        {/* Emergency override */}
+        <div className={`flex items-center justify-between gap-4 ${preferences.nightModeEnabled ? '' : 'opacity-50'}`}>
+          <SectionTitle
+            icon={<Clock className="w-4 h-4" />}
+            title="Allow emergency override"
+            hint="During night protection, a 30 minute override with a visible countdown, at most twice a night. Off means the STOP screen offers sleep and habit choices only."
+          />
+          <Switch
+            checked={preferences.emergencyOverrideEnabled}
+            disabled={!preferences.nightModeEnabled}
+            onCheckedChange={checked => onChange({ emergencyOverrideEnabled: checked })}
+            className="data-[state=checked]:bg-emerald-500"
+            aria-label="Allow emergency override"
+          />
         </div>
 
         {/* Tone */}

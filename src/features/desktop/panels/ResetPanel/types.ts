@@ -1,4 +1,6 @@
-export type RitualType = "breath" | "walk" | "dump" | "personal"
+// "shutdown" is the three-step night-mode Shutdown Protocol. It has no
+// countdown here; selecting it hands off to the ShutdownPanel.
+export type RitualType = "breath" | "walk" | "dump" | "personal" | "shutdown"
 
 export interface RitualOption {
   id: RitualType

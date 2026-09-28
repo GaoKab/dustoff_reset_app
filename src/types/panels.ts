@@ -38,6 +38,8 @@ export type PanelType =
   // Other Panels
   | 'calibration'
   | 'settings'
+  | 'shutdown'
+  | 'nightProtection'
   | 'reset'
   | 'parkingLot'
   | 'endSession'
@@ -104,6 +106,8 @@ export const OVERLAY_PANELS: PanelType[] = [
 export const FULLSCREEN_PANELS: PanelType[] = [
   'calibration',
   'settings',
+  'shutdown',
+  'nightProtection',
   'preSession',
   'savePrompt',
   'reset',

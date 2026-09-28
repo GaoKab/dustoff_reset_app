@@ -26,8 +26,8 @@ import type { BadgeDefinition } from '@/lib/badges/types'
 import { 
   setupTelemetryListeners, 
   cleanupTelemetryListeners,
-  calculateAppSwitchPenalty,
-  calculateDomainPenalty,
+  calculateAppSwitchPenalty as calculateAppSwitchPenaltyBase,
+  calculateDomainPenalty as calculateDomainPenaltyBase,
   calculateBonus,
   getAppCategory,
   getDomainCategory,
@@ -76,11 +76,13 @@ import { ProgressPanelAdapter } from '@/components/panels/ProgressPanelAdapter'
 // Absorbed from the Chrome extension: preferences, night mode, tone/style copy, AI-site pause
 import { usePreferences } from '@/hooks/usePreferences'
 import { useAiSitePause } from '@/hooks/useAiSitePause'
-import { getNightPhase, localDateKey, type NightPhase } from '@/lib/night'
+import { useNightMode } from '@/hooks/useNightMode'
 import { applyToneToIntervention, getAiPauseCopy, type CopyContext } from '@/lib/copy'
 import { SettingsPanelAdapter } from '@/components/panels/SettingsPanelAdapter'
 import { AiPauseOverlay } from '@/features/desktop/overlays/AiPauseOverlay'
-import { CloseDayNudge, AfterMidnightLine } from '@/components/NightNudges'
+import { WindDownCard, ShutdownNudge, OverrideCountdownCard, LateStartLine } from '@/components/NightNudges'
+import { ShutdownPanel } from '@/features/desktop/panels/ShutdownPanel'
+import { NightProtectionPanel } from '@/features/desktop/panels/NightProtectionPanel'
 
 // DEV ONLY - Badge Test Panel (remove before production)
 import { BadgeTestPanel } from '@/components/dev/BadgeTestPanel'
@@ -207,7 +209,7 @@ function App() {
   // Reset framing: why the reset panel was opened ('critical' hard stop,
   // 'landing' after a rough session ending, 'pre-meeting' before a calendar
   // event, or null for a plain reset)
-  const [resetContext, setResetContext] = useState<'critical' | 'landing' | 'pre-meeting' | 'close-day' | null>(null)
+  const [resetContext, setResetContext] = useState<'critical' | 'landing' | 'pre-meeting' | 'night' | null>(null)
   // Set when a session ends unfinished; offers a landing reset after the post-session flow
   const pendingLandingResetRef = useRef(false)
   // Pre-meeting nudge dismissal (keyed per event so each meeting nudges once)
@@ -349,14 +351,24 @@ function App() {
   // ============================================
   const { preferences, preferencesRef, updatePreferences } = usePreferences()
 
-  // Night phase, recomputed every 30s so the HUD softens on time
-  const [nightPhase, setNightPhase] = useState<NightPhase>('day')
-  useEffect(() => {
-    const compute = () => setNightPhase(getNightPhase(new Date(), preferences))
-    compute()
-    const tick = setInterval(compute, 30 * 1000)
-    return () => clearInterval(tick)
-  }, [preferences.nightModeEnabled, preferences.nightModeStart, preferences.nightModeEnd])
+  // Three-phase night mode: phase tick, once-per-night cards, STOP screen,
+  // emergency override and event recording live in src/hooks/useNightMode
+  const night = useNightMode({
+    preferences,
+    preferencesRef,
+    ready: mode === 'idle' || mode === 'session' || mode === 'paused',
+    sessionActive: mode === 'session' || mode === 'paused',
+    calibrationScore: calibration?.calibrationScore ?? null,
+  })
+  const nightPhase = night.nightPhase
+
+  // Night drift multiplier (wind-down 1.2, shutdown 1.5, night protection
+  // 2.0, gentle capped at 1.2). Wrapping the calculators here means every
+  // telemetry call site (recovery and the three start paths) applies it.
+  const calculateAppSwitchPenalty: typeof calculateAppSwitchPenaltyBase = (toApp, sessionMode, offense, whitelisted) =>
+    calculateAppSwitchPenaltyBase(toApp, sessionMode, offense, whitelisted, night.multiplierNow())
+  const calculateDomainPenalty: typeof calculateDomainPenaltyBase = (domain, sessionMode, offense, whitelisted) =>
+    calculateDomainPenaltyBase(domain, sessionMode, offense, whitelisted, night.multiplierNow())
 
   const copyContext: CopyContext = {
     tone: preferences.tone,
@@ -381,34 +393,42 @@ function App() {
     !blockScreenState.isOpen &&
     !showInterventionOverlay
 
-  // Close-the-day nudge: once per day, first idle moment after 22:00. Never forces.
-  const CLOSE_DAY_KEY = 'dustoff.closeDayNudgeShownOn'
-  const [closeDayShownOn, setCloseDayShownOn] = useState<string | null>(() => {
-    try { return localStorage.getItem(CLOSE_DAY_KEY) } catch { return null }
-  })
-  const todayKey = localDateKey(new Date())
-  const closeDayNudgeVisible =
-    mode === 'idle' &&
-    !currentPanel &&
-    !showEndSessionModal &&
-    !showTimeUpModal &&
-    !preMeetingNudgeVisible &&
-    nightPhase === 'close-day' &&
-    closeDayShownOn !== todayKey
+  // Cards under the HUD: wind-down once per evening, the shutdown offer
+  // once per evening, the override countdown while one runs. Never forced.
+  const cardsAllowed = !currentPanel && !showEndSessionModal && !showTimeUpModal && !preMeetingNudgeVisible
+  const windDownCardVisible = cardsAllowed && night.windDown.visible
+  const shutdownNudgeVisible = cardsAllowed && !windDownCardVisible && night.shutdown.nudgeVisible
+  const overrideCardVisible = !currentPanel && night.override.active
 
-  const markCloseDayShown = () => {
-    setCloseDayShownOn(todayKey)
-    try { localStorage.setItem(CLOSE_DAY_KEY, todayKey) } catch { /* private mode etc. */ }
+  // Show the STOP screen as a full panel whenever night protection asks for it
+  useEffect(() => {
+    if (night.protection.visible) setCurrentPanel('nightProtection')
+  }, [night.protection.visible])
+
+  // Shutdown protocol: offered once per evening, also a reset type
+  const handleShutdownStart = () => {
+    night.shutdown.dismissNudge()
+    setResetContext(null)
+    setCurrentPanel('shutdown')
   }
 
-  const handleCloseDay = () => {
-    markCloseDayShown()
-    setResetContext('close-day')
-    setCurrentPanel('reset')
+  const handleShutdownClose = () => {
+    setCurrentPanel(null)
   }
 
-  const handleCloseDayDismiss = () => {
-    markCloseDayShown()
+  // Night protection: dismissing never blocks. If the STOP screen came from
+  // a session start request, dismissing lets that start proceed.
+  const handleProtectionDismiss = () => {
+    const trigger = night.protection.trigger
+    night.protection.hide()
+    setCurrentPanel(trigger === 'session_start' ? 'entryPoint' : null)
+  }
+
+  const handleProtectionOverride = () => {
+    const trigger = night.protection.trigger
+    if (night.override.start()) {
+      setCurrentPanel(trigger === 'session_start' ? 'entryPoint' : null)
+    }
   }
 
   const handleOpenSettings = () => {
@@ -459,20 +479,21 @@ function App() {
   }, [showPermissionSetup])
 
   // Resize window when end session / time-up modal opens (or one of the
-  // cards under the HUD needs room: pre-meeting nudge, close-day nudge,
+  // cards under the HUD needs room: pre-meeting nudge, night cards,
   // AI-site pause)
-  const cardBelowHudVisible = preMeetingNudgeVisible || closeDayNudgeVisible || aiPauseVisible
+  const cardBelowHudVisible =
+    preMeetingNudgeVisible || windDownCardVisible || shutdownNudgeVisible || overrideCardVisible || aiPauseVisible
   useEffect(() => {
     if (showEndSessionModal || showTimeUpModal) {
       resizeForPanel('endSession')
     } else if (!currentPanel) {
       if (cardBelowHudVisible) {
-        tauriBridge.resizeWindow(320, 220)
+        tauriBridge.resizeWindow(320, windDownCardVisible ? 440 : 240)
       } else {
         resizeForPanel(null) // Back to HUD only
       }
     }
-  }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible])
+  }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible, windDownCardVisible])
 
   // Resize window for badge panels AND resize back when badges close
   useEffect(() => {
@@ -609,6 +630,7 @@ function App() {
     }
 
     const finalSession = await sessionManager.endSession(reason, subReason)
+    night.recordSessionEnd(bandwidthEngine.current)
 
     if (finalSession) {
       console.log('[App] Session ended:', {
@@ -781,6 +803,7 @@ function App() {
       // Setup telemetry listeners (same as handleSessionStart)
       const cleanup = await setupTelemetryListeners({
         onAppSwitch: (event) => {
+          night.protection.noteActivity()
           if (!event.appInfo) return
           
           const appName = event.appInfo.appName
@@ -813,6 +836,7 @@ function App() {
           }
         },
         onTabSwitch: (event) => {
+          night.protection.noteActivity()
           if (!event.browserTab?.domain) return
           
           const domain = event.browserTab.domain
@@ -867,6 +891,8 @@ function App() {
   // ============================================
 
   const handleStartSession = () => {
+    // Night protection asks first (STOP screen); dismissing it still proceeds
+    if (!night.protection.requestSessionStart()) return
     setCurrentPanel('entryPoint')
   }
 
@@ -926,6 +952,7 @@ function App() {
           console.log('[Telemetry] Setting up listeners first...')
           const cleanup = await setupTelemetryListeners({
             onAppSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.appInfo) return
               
               const appName = event.appInfo.appName
@@ -1028,6 +1055,7 @@ function App() {
               }
             },
             onTabSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.browserTab?.domain) return
               
               const domain = event.browserTab.domain
@@ -1206,6 +1234,7 @@ function App() {
           console.log('[Telemetry] Setting up listeners first...')
           const cleanup = await setupTelemetryListeners({
             onAppSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.appInfo) return
               
               const appName = event.appInfo.appName
@@ -1308,6 +1337,7 @@ function App() {
               }
             },
             onTabSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.browserTab?.domain) return
               
               const domain = event.browserTab.domain
@@ -1489,6 +1519,7 @@ function App() {
           console.log('[Telemetry] Setting up listeners first...')
           const cleanup = await setupTelemetryListeners({
             onAppSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.appInfo) return
               
               const appName = event.appInfo.appName
@@ -1600,6 +1631,7 @@ function App() {
               }
             },
             onTabSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.browserTab?.domain) return
               
               const domain = event.browserTab.domain
@@ -1844,7 +1876,32 @@ function App() {
 
     // Quick exit - end session without going through reflection flow
     await sessionManager.endSession('stopping_early', 'Quick exit')
+    night.recordSessionEnd(bandwidthEngine.current)
     
+    setMode('idle')
+    setCurrentPanel(null)
+  }
+
+  // Night protection "Close for tonight": end any session quietly and return
+  // to the dimmed idle HUD. No reflection flow at this hour.
+  const handleCloseForTonight = async () => {
+    night.protection.markClosedForTonight()
+    if (mode === 'session' || mode === 'paused') {
+      try {
+        telemetryStats.deactivate()
+        await tauriBridge.stopTelemetryMonitor()
+        if (telemetryCleanupRef.current) {
+          telemetryCleanupRef.current()
+          telemetryCleanupRef.current = null
+        }
+      } catch (telemetryError) {
+        console.error('[Telemetry] Failed to stop monitor:', telemetryError)
+      }
+      await sessionManager.endSession('stopping_early', 'Closed for the night')
+      night.recordSessionEnd(bandwidthEngine.current)
+    }
+    setShowEndSessionModal(false)
+    setShowTimeUpModal(false)
     setMode('idle')
     setCurrentPanel(null)
   }
@@ -1895,6 +1952,11 @@ function App() {
   }
 
   const handleResetComplete = (ritualType: RitualType) => {
+    // The Shutdown Protocol is a guided flow, not a timed ritual
+    if (ritualType === 'shutdown') {
+      handleShutdownStart()
+      return
+    }
     // Called when ritual is SELECTED (not completed)
     // NO bonus awarded here - wait for actual completion
     console.log('Reset ritual started:', ritualType)
@@ -2222,6 +2284,7 @@ function App() {
           onOpenHistory={handleOpenProgress}
           onOpenSettings={handleOpenSettings}
           dimmed={nightPhase !== 'day'}
+          nightNote={night.nightNote}
         />
 
         {/* Pre-meeting nudge - arrive at the next event with capacity */}
@@ -2234,9 +2297,20 @@ function App() {
           />
         )}
 
-        {/* Night mode: close the day after 22:00 (once, never forced) */}
-        {closeDayNudgeVisible && (
-          <CloseDayNudge onCloseDay={handleCloseDay} onDismiss={handleCloseDayDismiss} />
+        {/* Night mode cards: wind-down once per evening, shutdown offer once
+            per evening, override countdown while one runs. Never forced. */}
+        {windDownCardVisible && (
+          <WindDownCard estimateMinutes={night.windDown.estimateMinutes} onDismiss={night.windDown.dismiss} />
+        )}
+        {shutdownNudgeVisible && (
+          <ShutdownNudge onStart={handleShutdownStart} onDismiss={night.shutdown.dismissNudge} />
+        )}
+        {overrideCardVisible && (
+          <OverrideCountdownCard
+            secondsLeft={night.override.secondsLeft}
+            totalSeconds={night.override.totalSeconds}
+            onEnd={night.override.end}
+          />
         )}
 
         {/* AI-site pause: Hold. Stay here. (non-blocking, fades on its own) */}
@@ -2319,7 +2393,7 @@ function App() {
         {/* Entry Point Panel */}
         {currentPanel === 'entryPoint' && (
           <PanelContainer isOpen={true}>
-            {nightPhase === 'after-midnight' && <AfterMidnightLine />}
+            {(nightPhase === 'shutdown' || nightPhase === 'night-protection') && <LateStartLine />}
             <EntryPointPanel
               onSelectQuickStart={handleSelectQuickStart}
               onSelectPreset={handleSelectPreset}
@@ -2393,6 +2467,31 @@ function App() {
             onChange={updatePreferences}
             onClose={handleClosePanel}
           />
+        )}
+
+        {/* Night mode: Shutdown Protocol (three steps, about 15 minutes) */}
+        {currentPanel === 'shutdown' && (
+          <PanelContainer isOpen={true}>
+            <ShutdownPanel onComplete={night.shutdown.markCompleted} onClose={handleShutdownClose} />
+          </PanelContainer>
+        )}
+
+        {/* Night mode: STOP screen. Dismissible, never locks the machine. */}
+        {currentPanel === 'nightProtection' && night.protection.visible && (
+          <PanelContainer isOpen={true}>
+            <NightProtectionPanel
+              key={`${night.protection.view}-${night.protection.trigger ?? ''}`}
+              bandwidthScore={night.protection.bandwidthScore}
+              overrideUsedTonight={night.override.usedTonight}
+              overrideEnabled={preferences.emergencyOverrideEnabled}
+              initialView={night.protection.view}
+              onStartOverride={handleProtectionOverride}
+              onCantSleep={() => night.protection.recordChoice('cant_sleep')}
+              onHabit={() => night.protection.recordChoice('habit')}
+              onCloseForTonight={handleCloseForTonight}
+              onDismiss={handleProtectionDismiss}
+            />
+          </PanelContainer>
         )}
 
         {currentPanel === 'reset' && (

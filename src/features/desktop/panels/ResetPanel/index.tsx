@@ -36,6 +36,12 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
       duration: 240,
       description: "Conversation, bathroom break",
     },
+    {
+      id: "shutdown",
+      label: "Shutdown",
+      duration: 900,
+      description: "Close the day in three steps",
+    },
   ]
 
   useEffect(() => {
@@ -68,6 +74,12 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
   }, [activeRitual, timeRemaining, onClose, onRitualComplete])
 
   const handleSelectRitual = (ritual: RitualOption) => {
+    // The Shutdown Protocol is a guided flow, not a countdown. Hand off.
+    if (ritual.id === "shutdown") {
+      onSelectRitual(ritual.id)
+      return
+    }
+
     // Start tracking actual time
     ritualStartTime.current = Date.now()
     plannedDuration.current = ritual.duration
@@ -152,7 +164,9 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
                 <button
                   key={ritual.id}
                   onClick={() => handleSelectRitual(ritual)}
-                  className="p-4 rounded-lg border border-zinc-700 bg-[#0a0f0d]/80 hover:bg-zinc-800/50 hover:border-emerald-500 transition-all group text-center"
+                  className={`p-4 rounded-lg border border-zinc-700 bg-[#0a0f0d]/80 hover:bg-zinc-800/50 hover:border-emerald-500 transition-all group text-center ${
+                    ritual.id === "shutdown" ? "col-span-2" : ""
+                  }`}
                 >
                   <div className="text-sm font-light text-emerald-400 transition-colors mb-1">{ritual.label}</div>
                   <div className="text-xs text-zinc-500 mb-2">{ritual.description}</div>

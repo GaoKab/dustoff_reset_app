@@ -20,6 +20,7 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { tauriBridge } from '@/lib/tauri-bridge'
+import { insomniaLine, dateKeyDaysAgo } from '@/lib/night'
 import type { CalibrationData, SessionRecord } from '@/lib/tauri-types'
 
 interface ProgressPanelProps {
@@ -96,6 +97,8 @@ export function ProgressPanel({ onClose }: ProgressPanelProps) {
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [calibrations, setCalibrations] = useState<CalibrationData[]>([])
   const [loading, setLoading] = useState(true)
+  // Night mode: distinct nights in the last seven with an "I can't sleep" choice
+  const [troubleNights, setTroubleNights] = useState<number | null>(null)
 
   useEffect(() => {
     const load = async () => {
@@ -106,6 +109,12 @@ export function ProgressPanel({ onClose }: ProgressPanelProps) {
         ])
         setSessions(allSessions)
         setCalibrations(calHistory)
+        try {
+          const nights = await tauriBridge.countNightsWithEventSince(dateKeyDaysAgo(new Date(), 6), 'cant_sleep')
+          setTroubleNights(nights)
+        } catch (nightError) {
+          console.log('[Progress] Night events unavailable:', nightError)
+        }
       } catch (error) {
         console.error('[Progress] Failed to load history:', error)
       } finally {
@@ -329,6 +338,14 @@ export function ProgressPanel({ onClose }: ProgressPanelProps) {
               <p className="text-lg font-light">{bests.bestCal}</p>
             </div>
           </div>
+
+          {/* Nights: the only place the insomnia line appears. No advice. */}
+          {troubleNights !== null && (
+            <div className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800">
+              <p className="text-xs text-zinc-500 mb-1">Nights</p>
+              <p className="text-sm text-zinc-300">{insomniaLine(troubleNights)}</p>
+            </div>
+          )}
         </div>
       )}
     </div>
