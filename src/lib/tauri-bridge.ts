@@ -2,6 +2,7 @@
 // Type-safe wrappers for all Tauri commands
 // This provides a clean API for React components to interact with the Rust backend
 
+import type { Preferences } from '@/lib/preferences/types'
 import { invoke } from '@tauri-apps/api/core'
 import type {
   CalibrationData,
@@ -134,6 +135,16 @@ export const tauriBridge = {
 
   getUser: (): Promise<UserData | null> =>
     invoke('get_user'),
+
+  // ============================================
+  // PREFERENCES (night mode, tone, prompt style, AI pause)
+  // ============================================
+
+  getPreferences: (): Promise<Preferences> =>
+    invoke('get_preferences'),
+
+  savePreferences: (prefs: Preferences): Promise<void> =>
+    invoke('save_preferences', { prefs }),
 
   // ============================================
   // UTILITIES
