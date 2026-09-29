@@ -3,6 +3,11 @@
 // work schedule it follows ("When do you usually work?"), the emergency
 // override, tone, prompt style and the AI-site pause. Everything is
 // stored locally.
+//
+// Edits live in a local draft until Save. Nothing is written, and no
+// night phase is re-derived, while the person is still typing a time:
+// saving each keystroke used to move the phases mid-edit, and a flip into
+// night protection let the STOP screen replace this panel.
 
 import { useState } from 'react'
 import { X, Moon, MessageCircle, Sparkles, Hourglass, Clock, Briefcase } from 'lucide-react'
@@ -17,12 +22,16 @@ import {
   type PromptStyle,
   type ScheduleMode,
 } from '@/lib/preferences/types'
-import { validatePhaseBounds } from '@/lib/night'
 import { derivePhaseBounds, describeNightBounds, describeDaysOff } from '@/lib/night/schedule'
+import { normalizeDraftClocks, preferencesPatch, validatePreferencesDraft } from '@/lib/settings-flow'
 
 interface SettingsPanelProps {
   preferences: Preferences
-  onChange: (patch: Partial<Preferences>) => void
+  /** Fields to start the draft with, e.g. the mode picked on the first-run card */
+  initialPatch?: Partial<Preferences> | null
+  /** One save, on Save, with only the fields that changed */
+  onSave: (patch: Partial<Preferences>) => void
+  /** Cancel: the draft is dropped */
   onClose: () => void
 }
 
@@ -117,38 +126,50 @@ function PhaseRow({
         type="time"
         value={value}
         disabled={disabled}
-        onChange={e => e.target.value && onChange(e.target.value)}
+        // Whatever the browser hands over mid-edit goes into the draft as
+        // is; it is normalised and validated once, on Save.
+        onChange={e => onChange(e.target.value ?? '')}
         className="bg-[#0a0f0d]/80 border border-zinc-700 rounded-md px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
       />
     </div>
   )
 }
 
-export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelProps) {
+export function SettingsPanel({ preferences, initialPatch, onSave, onClose }: SettingsPanelProps) {
   const aiPauseAvailable = isMacOS()
-  const [boundsError, setBoundsError] = useState<string | null>(null)
+  // The draft: local until Save. Seeded once from the saved preferences
+  // plus whatever the caller wants preselected.
+  const [draft, setDraft] = useState<Preferences>(() => ({ ...preferences, ...(initialPatch ?? {}) }))
+  const [error, setError] = useState<string | null>(null)
+  const edit = (patch: Partial<Preferences>) => {
+    setDraft(prev => ({ ...prev, ...patch }))
+    setError(null)
+  }
+  const changeBound = (key: BoundKey, value: string) => edit({ [key]: value })
 
-  // Phase bounds are validated as a set before saving, mirroring the Rust
-  // side, so a single edit can never leave the phases out of order.
-  const changeBound = (key: BoundKey, value: string) => {
-    const next = { ...preferences, [key]: value }
-    const problem = validatePhaseBounds(next)
-    setBoundsError(problem)
-    if (!problem) onChange({ [key]: value })
+  const handleSave = () => {
+    const problem = validatePreferencesDraft(draft)
+    if (problem) {
+      setError(problem)
+      return
+    }
+    const normalized = normalizeDraftClocks(draft) ?? draft
+    onSave(preferencesPatch(preferences, normalized))
   }
 
-  const nightEnabled = preferences.nightModeEnabled
-  const scheduled = !preferences.phaseOverride && preferences.scheduleMode !== 'standard'
-  const derived = derivePhaseBounds(preferences)
-  const daysOffLine = describeDaysOff(preferences)
+  const nightEnabled = draft.nightModeEnabled
+  const scheduled = !draft.phaseOverride && draft.scheduleMode !== 'standard'
+  const derived = derivePhaseBounds(draft)
+  const daysOffLine = describeDaysOff(draft)
   const toggleDay = (i: number) => {
-    const workDays = preferences.workDays.map((d, idx) => (idx === i ? !d : d))
-    onChange({ workDays })
+    const workDays = draft.workDays.map((d, idx) => (idx === i ? !d : d))
+    edit({ workDays })
   }
+  const dirty = Object.keys(preferencesPatch(preferences, draft)).length > 0
 
   return (
     <div className="w-[475px] rounded-3xl bg-[#0a0f0d]/55 backdrop-blur-xl border border-emerald-500/30 shadow-2xl overflow-hidden">
-      <div className="p-6 space-y-6 max-h-[790px] overflow-y-auto">
+      <div className="p-6 space-y-6 max-h-[720px] overflow-y-auto">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-xl font-light text-emerald-400">Settings</h2>
@@ -157,7 +178,8 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
           <button
             onClick={onClose}
             className="text-zinc-500 hover:text-zinc-300 transition-colors p-1 -mt-1 -mr-1"
-            aria-label="Close settings"
+            aria-label="Cancel"
+            title="Cancel"
           >
             <X className="w-5 h-5" />
           </button>
@@ -171,15 +193,15 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
             hint="Three phases: wind-down softens the HUD, shutdown offers a 15 minute close, night protection asks before you start."
           />
           <Switch
-            checked={preferences.nightModeEnabled}
-            onCheckedChange={checked => onChange({ nightModeEnabled: checked })}
+            checked={draft.nightModeEnabled}
+            onCheckedChange={checked => edit({ nightModeEnabled: checked })}
             className="data-[state=checked]:bg-emerald-500"
             aria-label="Night mode"
           />
         </div>
 
         {/* Work schedule: night mode follows the person's day, not the clock */}
-        <div className={`space-y-3 ${preferences.nightModeEnabled ? '' : 'opacity-50'}`}>
+        <div className={`space-y-3 ${draft.nightModeEnabled ? '' : 'opacity-50'}`}>
           <SectionTitle
             icon={<Briefcase className="w-4 h-4" />}
             title="When do you usually work?"
@@ -187,12 +209,12 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
           />
           <div className="space-y-2">
             {SCHEDULE_MODES.map(mode => {
-              const active = mode === preferences.scheduleMode
+              const active = mode === draft.scheduleMode
               return (
                 <button
                   key={mode}
                   disabled={!nightEnabled}
-                  onClick={() => onChange({ scheduleMode: mode, scheduleSetupDone: true })}
+                  onClick={() => edit({ scheduleMode: mode, scheduleSetupDone: true })}
                   className={`w-full p-3 rounded-lg border text-left transition-all ${
                     active
                       ? 'border-emerald-500 bg-emerald-500/10'
@@ -214,7 +236,7 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
                 <div className="text-xs text-zinc-400">Work days</div>
                 <div className="flex gap-1.5">
                   {WORK_DAY_LABELS.map((label, i) => {
-                    const on = preferences.workDays[i] === true
+                    const on = draft.workDays[i] === true
                     return (
                       <button
                         key={label}
@@ -235,23 +257,23 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
               </div>
               <PhaseRow
                 label="Work starts"
-                value={preferences.workStart}
+                value={draft.workStart}
                 disabled={!nightEnabled}
-                onChange={v => onChange({ workStart: v })}
+                onChange={v => edit({ workStart: v })}
               />
               <PhaseRow
                 label="Work ends"
-                value={preferences.workEnd}
+                value={draft.workEnd}
                 disabled={!nightEnabled}
-                onChange={v => onChange({ workEnd: v })}
+                onChange={v => edit({ workEnd: v })}
               />
-              {preferences.scheduleMode === 'night_shift' && (
+              {draft.scheduleMode === 'night_shift' && (
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs text-zinc-400">Keep my shift rhythm on days off</label>
                   <Switch
-                    checked={preferences.keepShiftRhythmOnDaysOff}
+                    checked={draft.keepShiftRhythmOnDaysOff}
                     disabled={!nightEnabled}
-                    onCheckedChange={checked => onChange({ keepShiftRhythmOnDaysOff: checked })}
+                    onCheckedChange={checked => edit({ keepShiftRhythmOnDaysOff: checked })}
                     className="data-[state=checked]:bg-emerald-500"
                     aria-label="Keep my shift rhythm on days off"
                   />
@@ -272,58 +294,55 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
             <div className="flex items-center justify-between gap-3">
               <label className="text-xs text-zinc-400">Set the phase times myself</label>
               <Switch
-                checked={preferences.phaseOverride}
+                checked={draft.phaseOverride}
                 disabled={!nightEnabled}
-                onCheckedChange={checked => onChange({ phaseOverride: checked })}
+                onCheckedChange={checked => edit({ phaseOverride: checked })}
                 className="data-[state=checked]:bg-emerald-500"
                 aria-label="Set the phase times myself"
               />
             </div>
-            {preferences.phaseOverride && (
+            {draft.phaseOverride && (
               <div className="space-y-2">
                 <PhaseRow
                   label="Wind-down from"
-                  value={preferences.nightModeStart}
+                  value={draft.nightModeStart}
                   disabled={!nightEnabled}
                   onChange={v => changeBound('nightModeStart', v)}
                 />
                 <PhaseRow
                   label="Shutdown from"
-                  value={preferences.shutdownStart}
+                  value={draft.shutdownStart}
                   disabled={!nightEnabled}
                   onChange={v => changeBound('shutdownStart', v)}
                 />
                 <PhaseRow
                   label="Night protection from"
-                  value={preferences.protectionStart}
+                  value={draft.protectionStart}
                   disabled={!nightEnabled}
                   onChange={v => changeBound('protectionStart', v)}
                 />
                 <PhaseRow
                   label="Night ends at"
-                  value={preferences.nightModeEnd}
+                  value={draft.nightModeEnd}
                   disabled={!nightEnabled}
                   onChange={v => changeBound('nightModeEnd', v)}
                 />
-                {boundsError && (
-                  <p className="text-xs text-amber-300/90 leading-snug">{boundsError} The previous times are kept.</p>
-                )}
               </div>
             )}
           </div>
         </div>
 
         {/* Emergency override */}
-        <div className={`flex items-center justify-between gap-4 ${preferences.nightModeEnabled ? '' : 'opacity-50'}`}>
+        <div className={`flex items-center justify-between gap-4 ${draft.nightModeEnabled ? '' : 'opacity-50'}`}>
           <SectionTitle
             icon={<Clock className="w-4 h-4" />}
             title="Allow emergency override"
             hint="During night protection, a 30 minute override with a visible countdown, at most twice a night. Off means the STOP screen offers sleep and habit choices only."
           />
           <Switch
-            checked={preferences.emergencyOverrideEnabled}
-            disabled={!preferences.nightModeEnabled}
-            onCheckedChange={checked => onChange({ emergencyOverrideEnabled: checked })}
+            checked={draft.emergencyOverrideEnabled}
+            disabled={!draft.nightModeEnabled}
+            onCheckedChange={checked => edit({ emergencyOverrideEnabled: checked })}
             className="data-[state=checked]:bg-emerald-500"
             aria-label="Allow emergency override"
           />
@@ -338,9 +357,9 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
           />
           <SegmentedChoice
             options={TONES}
-            value={preferences.tone}
+            value={draft.tone}
             labels={TONE_LABELS}
-            onSelect={tone => onChange({ tone })}
+            onSelect={tone => edit({ tone })}
           />
         </div>
 
@@ -353,9 +372,9 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
           />
           <SegmentedChoice
             options={PROMPT_STYLES}
-            value={preferences.promptStyle}
+            value={draft.promptStyle}
             labels={STYLE_LABELS}
-            onSelect={promptStyle => onChange({ promptStyle })}
+            onSelect={promptStyle => edit({ promptStyle })}
           />
         </div>
 
@@ -371,15 +390,36 @@ export function SettingsPanel({ preferences, onChange, onClose }: SettingsPanelP
             }
           />
           <Switch
-            checked={preferences.aiPauseEnabled}
+            checked={draft.aiPauseEnabled}
             disabled={!aiPauseAvailable}
-            onCheckedChange={checked => onChange({ aiPauseEnabled: checked })}
+            onCheckedChange={checked => edit({ aiPauseEnabled: checked })}
             className="data-[state=checked]:bg-emerald-500"
             aria-label="AI-site pause"
           />
         </div>
 
         <p className="text-[11px] text-zinc-600 text-center">Saved locally. Nothing leaves this machine.</p>
+      </div>
+
+      {/* One save, at the end. Cancel drops the draft. */}
+      <div className="px-6 py-4 border-t border-zinc-800/80 space-y-2">
+        {error && (
+          <p className="text-xs text-amber-300/90 leading-snug" role="alert">{error}</p>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={handleSave}
+            className="flex-1 py-2.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-100 text-sm font-light transition-colors"
+          >
+            {dirty ? 'Save' : 'Done'}
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-sm font-light transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -35,12 +35,29 @@ export const PANEL_DIMENSIONS = {
 export type PanelType = keyof typeof PANEL_DIMENSIONS
 
 /**
+ * The dimensions for a panel, with the HUD size as the fallback for an
+ * unknown key so a lookup can never hand the window NaN or 0.
+ */
+export function panelDimensions(panel: PanelType | null | undefined): { width: number; height: number } {
+  const dims = panel ? (PANEL_DIMENSIONS as Record<string, { width: number; height: number } | undefined>)[panel] : undefined
+  if (dims && Number.isFinite(dims.width) && Number.isFinite(dims.height) && dims.width > 0 && dims.height > 0) {
+    return dims
+  }
+  return PANEL_DIMENSIONS.hudOnly
+}
+
+/**
  * Resize the window to fit the specified panel type.
- * If panel is null, resizes to HUD-only dimensions.
+ * If panel is null (or unknown), resizes to HUD-only dimensions. Never
+ * throws: a failed resize is logged, and the window keeps its size.
  */
 export async function resizeForPanel(panel: PanelType | null): Promise<void> {
-  const dims = panel ? PANEL_DIMENSIONS[panel] : PANEL_DIMENSIONS.hudOnly
-  await tauriBridge.resizeWindow(dims.width, dims.height)
+  const dims = panelDimensions(panel)
+  try {
+    await tauriBridge.resizeWindow(dims.width, dims.height)
+  } catch (err) {
+    console.error('[Window] Resize failed for', panel ?? 'hud', err)
+  }
 }
 
 /**

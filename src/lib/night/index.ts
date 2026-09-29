@@ -26,6 +26,21 @@ export function parseClock(value: string): number | null {
 }
 
 /**
+ * What an `<input type="time">` hands over, made safe: "HH:MM" as is,
+ * "HH:MM:SS" with the seconds dropped (WebKit adds them when a step is
+ * set), "H:MM" padded. Anything else, including the empty string and the
+ * partial values a browser may emit mid-edit, is null so the caller can
+ * keep the previous value instead of throwing or saving junk.
+ */
+export function normalizeClockInput(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  const match = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value.trim())
+  if (!match) return null
+  const clock = `${match[1].padStart(2, '0')}:${match[2]}`
+  return parseClock(clock) === null ? null : clock
+}
+
+/**
  * Is `now` inside the [start, end) window? Handles windows that cross
  * midnight (20:00 to 06:00) as well as same-day windows (13:00 to 15:00).
  * A window whose start equals its end is treated as never active.

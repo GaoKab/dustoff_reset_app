@@ -3,6 +3,7 @@ import {
   isWithinNightWindow,
   getNightPhase,
   parseClock,
+  normalizeClockInput,
   validatePhaseBounds,
   nightKey,
   minutesToClock,
@@ -40,6 +41,25 @@ describe('night window', () => {
     expect(isWithinNightWindow(at(14), 'late', '15:00')).toBe(false)
     expect(parseClock('7:00')).toBeNull()
     expect(parseClock('23:59')).toBe(23 * 60 + 59)
+  })
+})
+
+describe('normalizeClockInput', () => {
+  it('keeps HH:MM, drops seconds and pads a single-digit hour', () => {
+    expect(normalizeClockInput('09:30')).toBe('09:30')
+    expect(normalizeClockInput('09:30:00')).toBe('09:30')
+    expect(normalizeClockInput('9:30')).toBe('09:30')
+    expect(normalizeClockInput(' 23:59 ')).toBe('23:59')
+  })
+
+  it('returns null for what a time input emits mid-edit, never throws', () => {
+    expect(normalizeClockInput('')).toBeNull()
+    expect(normalizeClockInput('1')).toBeNull()
+    expect(normalizeClockInput('12:')).toBeNull()
+    expect(normalizeClockInput('12:5')).toBeNull()
+    expect(normalizeClockInput('24:00')).toBeNull()
+    expect(normalizeClockInput(null)).toBeNull()
+    expect(normalizeClockInput(undefined)).toBeNull()
   })
 })
 

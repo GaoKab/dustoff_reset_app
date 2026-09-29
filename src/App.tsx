@@ -75,13 +75,20 @@ import { ProgressPanelAdapter } from '@/components/panels/ProgressPanelAdapter'
 
 // Absorbed from the Chrome extension: preferences, night mode, tone/style copy, AI-site pause
 import { usePreferences } from '@/hooks/usePreferences'
-import type { ScheduleMode } from '@/lib/preferences/types'
+import type { ScheduleMode, Preferences } from '@/lib/preferences/types'
 import { useAiSitePause } from '@/hooks/useAiSitePause'
 import { useNightMode } from '@/hooks/useNightMode'
 import { applyToneToIntervention, getAiPauseCopy, type CopyContext } from '@/lib/copy'
 import { SettingsPanelAdapter } from '@/components/panels/SettingsPanelAdapter'
 import { AiPauseOverlay } from '@/features/desktop/overlays/AiPauseOverlay'
-import { WindDownCard, ShutdownNudge, OverrideCountdownCard, LateStartLine, ScheduleSetupCard } from '@/components/NightNudges'
+import { WindDownCard, ShutdownNudge, OverrideCountdownCard, LateStartLine, ScheduleSetupCard, SavedLine } from '@/components/NightNudges'
+import { PanelErrorBoundary } from '@/components/PanelErrorBoundary'
+import {
+  settingsSavedLine,
+  panelAfterSettingsSave,
+  nightProtectionMayTakeOver,
+  type SettingsOrigin,
+} from '@/lib/settings-flow'
 import { ShutdownPanel } from '@/features/desktop/panels/ShutdownPanel'
 import { NightProtectionPanel } from '@/features/desktop/panels/NightProtectionPanel'
 
@@ -404,19 +411,64 @@ function App() {
   const shutdownNudgeVisible = cardsAllowed && !scheduleCardVisible && !windDownCardVisible && night.shutdown.nudgeVisible
   const overrideCardVisible = !currentPanel && night.override.active
 
+  // Settings: where it was opened from (decides where Save returns to),
+  // the fields to preselect in its draft, and the one-line confirmation
+  // shown after a save so the close is never silent.
+  const [settingsOrigin, setSettingsOrigin] = useState<SettingsOrigin | null>(null)
+  const [settingsInitialPatch, setSettingsInitialPatch] = useState<Partial<Preferences> | null>(null)
+  const [savedLine, setSavedLine] = useState<string | null>(null)
+  useEffect(() => {
+    if (!savedLine) return
+    const id = setTimeout(() => setSavedLine(null), 8000)
+    return () => clearTimeout(id)
+  }, [savedLine])
+
+  // Open "How do you want to start?", through the night gate like the HUD
+  // button does: during night protection the STOP screen comes first
+  // (the panel slot is freed so it can), and dismissing it still proceeds.
+  const openEntryPoint = () => {
+    setCurrentPanel(night.protection.requestSessionStart() ? 'entryPoint' : null)
+  }
+
   const handleScheduleChoice = (scheduleMode: ScheduleMode) => {
-    updatePreferences({ scheduleMode, scheduleSetupDone: true })
-    // A shift or custom schedule needs days and hours: open Settings to fill them in
-    if (scheduleMode !== 'standard') setCurrentPanel('settings')
+    if (scheduleMode === 'standard') {
+      // Nothing to fill in: one save, a confirmation, and on to the entry point
+      updatePreferences({ scheduleMode, scheduleSetupDone: true })
+      setSavedLine(settingsSavedLine(preferencesRef.current))
+      openEntryPoint()
+      return
+    }
+    // A shift or custom schedule needs days and hours: open Settings with
+    // the mode preselected. Nothing is saved until Save is tapped there.
+    setSettingsInitialPatch({ scheduleMode, scheduleSetupDone: true })
+    setSettingsOrigin({ from: 'setup' })
+    setCurrentPanel('settings')
   }
   const handleScheduleLater = () => {
     updatePreferences({ scheduleSetupDone: true })
   }
 
-  // Show the STOP screen as a full panel whenever night protection asks for it
+  const handleSettingsSave = (patch: Partial<Preferences>) => {
+    updatePreferences(patch)
+    setSavedLine(settingsSavedLine(preferencesRef.current))
+    const next = panelAfterSettingsSave(settingsOrigin)
+    if (next === 'entryPoint') openEntryPoint()
+    else setCurrentPanel(next)
+    setSettingsOrigin(null)
+    setSettingsInitialPatch(null)
+  }
+  const handleSettingsCancel = () => {
+    setCurrentPanel(settingsOrigin?.from === 'hud' && settingsOrigin.returnTo !== 'settings' ? settingsOrigin.returnTo : null)
+    setSettingsOrigin(null)
+    setSettingsInitialPatch(null)
+  }
+
+  // Show the STOP screen as a full panel whenever night protection asks for
+  // it, but only when no other panel is open: Settings, a wizard or a
+  // summary is never replaced mid-use. The screen waits until they close.
   useEffect(() => {
-    if (night.protection.visible) setCurrentPanel('nightProtection')
-  }, [night.protection.visible])
+    if (night.protection.visible && nightProtectionMayTakeOver(currentPanel)) setCurrentPanel('nightProtection')
+  }, [night.protection.visible, currentPanel])
 
   // Shutdown protocol: offered once per evening, also a reset type
   const handleShutdownStart = () => {
@@ -445,6 +497,8 @@ function App() {
   }
 
   const handleOpenSettings = () => {
+    setSettingsInitialPatch(null)
+    setSettingsOrigin({ from: 'hud', returnTo: currentPanel })
     setCurrentPanel('settings')
   }
 
@@ -495,14 +549,15 @@ function App() {
   // cards under the HUD needs room: pre-meeting nudge, night cards,
   // AI-site pause)
   const cardBelowHudVisible =
-    preMeetingNudgeVisible || scheduleCardVisible || windDownCardVisible || shutdownNudgeVisible || overrideCardVisible || aiPauseVisible
+    preMeetingNudgeVisible || scheduleCardVisible || windDownCardVisible || shutdownNudgeVisible || overrideCardVisible || aiPauseVisible ||
+    savedLine !== null
   const tallCardVisible = windDownCardVisible || scheduleCardVisible
   useEffect(() => {
     if (showEndSessionModal || showTimeUpModal) {
       resizeForPanel('endSession')
     } else if (!currentPanel) {
       if (cardBelowHudVisible) {
-        tauriBridge.resizeWindow(320, tallCardVisible ? 440 : 240)
+        tauriBridge.resizeWindow(320, tallCardVisible ? 440 : 240).catch(err => console.error('[Window] Resize failed:', err))
       } else {
         resizeForPanel(null) // Back to HUD only
       }
@@ -2301,6 +2356,10 @@ function App() {
           nightNote={night.nightNote}
         />
 
+        {/* Everything below the HUD is fenced: a render error in a card or
+            panel shows one line under the HUD instead of blanking the app */}
+        <PanelErrorBoundary resetKey={currentPanel} onReset={() => setCurrentPanel(null)}>
+
         {/* Pre-meeting nudge - arrive at the next event with capacity */}
         {preMeetingNudgeVisible && calendar.nextEvent && (
           <PreMeetingNudge
@@ -2310,6 +2369,9 @@ function App() {
             onDismiss={handleNudgeDismiss}
           />
         )}
+
+        {/* After Settings saves: one line, above whatever is open */}
+        {savedLine && <SavedLine text={savedLine} />}
 
         {/* First run: when do you usually work? Once, remembered. */}
         {scheduleCardVisible && (
@@ -2483,8 +2545,9 @@ function App() {
           <SettingsPanelAdapter
             isOpen={true}
             preferences={preferences}
-            onChange={updatePreferences}
-            onClose={handleClosePanel}
+            initialPatch={settingsInitialPatch}
+            onSave={handleSettingsSave}
+            onClose={handleSettingsCancel}
           />
         )}
 
@@ -2597,7 +2660,8 @@ function App() {
             sessionId={sessionManager.sessionId || undefined}
           />
         )}
-       
+
+        </PanelErrorBoundary>
       </div>
       
       {/* DEV ONLY - Badge Test Panel (Cmd/Ctrl + Shift + B to toggle) */}

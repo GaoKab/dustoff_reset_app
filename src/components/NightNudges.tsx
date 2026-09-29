@@ -6,6 +6,7 @@
 // - OverrideCountdownCard: visible countdown while an emergency override runs
 // - LateStartLine: one line above the session start flow late at night
 // - ScheduleSetupCard: the first-run "When do you usually work?" question
+// - SavedLine: one line after Settings saves, so the close is not silent
 
 import { useState } from 'react'
 import { Moon, Sunset, X, Clock, Check, Briefcase } from 'lucide-react'
@@ -184,12 +185,30 @@ export function LateStartLine() {
 }
 
 // ============================================
+// SAVED LINE (after Settings saves)
+// ============================================
+
+/** One line under the HUD, above whatever panel is open: "Saved. Wind-down from …" */
+export function SavedLine({ text }: { text: string }) {
+  return (
+    <div
+      role="status"
+      className="mt-3 flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0a0f0d]/85 border border-emerald-400/30 text-xs text-emerald-100/90 animate-in fade-in duration-300 w-[320px]"
+    >
+      <Check className="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
+      <span className="leading-snug">{text}</span>
+    </div>
+  )
+}
+
+// ============================================
 // SCHEDULE SETUP (first run, once)
 // ============================================
 
 interface ScheduleSetupCardProps {
-  /** The person picked one of the three; the caller saves it and, for a
-   *  shift or custom schedule, opens Settings to fill in the hours */
+  /** The person picked one of the three. Standard saves at once; a shift
+   *  or custom schedule opens Settings with that mode preselected, and the
+   *  one save happens there, after the hours are in */
   onChoose: (mode: ScheduleMode) => void
   /** "Later" keeps the standard clock and does not ask again */
   onLater: () => void
