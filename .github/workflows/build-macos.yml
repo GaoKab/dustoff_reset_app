@@ -9,6 +9,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write # needed to create the draft release on a tag push
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +30,9 @@ jobs:
       # documentation/distribution/APPLE_SIGNING_SETUP.md:
       #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
       #   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+      # On a version-tag push this also creates a DRAFT pre-release with the
+      # .dmg attached, so testers get a stable download link once Gao publishes
+      # it. Manual runs still only upload the artifact below.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -38,6 +43,12 @@ jobs:
           # APPLE_ID: ${{ secrets.APPLE_ID }}
           # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('DustOff Reset {0}', github.ref_name) || '' }}
+          releaseBody: 'Unsigned macOS build (Apple Silicon). First open: System Settings > Privacy & Security > Open Anyway.'
+          releaseDraft: true
+          prerelease: true
 
       - name: Upload artifact (.dmg)
         uses: actions/upload-artifact@v4
