@@ -480,6 +480,7 @@ If app crashes during a session:
 | Decorations | None (frameless) |
 | Transparency | Yes (glassmorphism) |
 | Always on top | Yes (overlay) |
+| Visible on all desktops | Yes (macOS Spaces and Linux workspaces; no effect on Windows) |
 | Resizable | Yes (programmatic) |
 | Skip taskbar | Yes |
 
