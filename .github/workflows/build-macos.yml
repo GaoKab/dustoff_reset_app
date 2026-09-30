@@ -25,28 +25,45 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # Unsigned build. To sign + notarize for public distribution, add the
-      # repo secrets below and uncomment the env block — full walkthrough in
-      # documentation/distribution/APPLE_SIGNING_SETUP.md:
-      #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD
-      #   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
-      # On a version-tag push this also creates a DRAFT pre-release with the
-      # .dmg attached, so testers get a stable download link once Gao publishes
-      # it. Manual runs still only upload the artifact below.
-      - name: Build Tauri app
+      # Two build steps, one of which runs. If the six Apple secrets are set
+      # (documentation/distribution/APPLE_SIGNING_SETUP.md), the app is signed
+      # with the Developer ID certificate and notarized by Apple, so a stranger's
+      # first open is clean. If they are not set, the unsigned build runs, as
+      # before. On a version-tag push either step also attaches the .dmg to a
+      # draft pre-release, which Gao publishes after a look.
+      # The secrets context is not readable in a step's `if`, so a one-line
+      # step turns "is the certificate secret set?" into an output.
+      - name: Decide signed or unsigned
+        id: signing
+        run: echo "enabled=${{ secrets.APPLE_CERTIFICATE != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Tauri app (signed and notarized)
+        if: steps.signing.outputs.enabled == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('DustOff Reset {0}', github.ref_name) || '' }}
-          releaseBody: 'Unsigned macOS build (Apple Silicon). First open: System Settings > Privacy & Security > Open Anyway.'
+          releaseBody: 'macOS, Apple Silicon. Signed and notarized. Nothing leaves your Mac: no account, no server.'
+          releaseDraft: true
+          prerelease: true
+
+      - name: Build Tauri app (unsigned)
+        if: steps.signing.outputs.enabled != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('DustOff Reset {0}', github.ref_name) || '' }}
+          releaseBody: 'Unsigned early build for macOS on Apple Silicon. First open: System Settings > Privacy & Security > Open Anyway. Nothing leaves your Mac: no account, no server.'
           releaseDraft: true
           prerelease: true
 
