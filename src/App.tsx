@@ -564,6 +564,37 @@ function App() {
     }
   }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible, tallCardVisible])
 
+  // Safety net against clipped panels. PANEL_DIMENSIONS is a plan; the
+  // rendered content is the truth. If what is on screen is taller or wider
+  // than the window, grow the window to fit. Never shrinks here (the table
+  // handles shrinking on panel change). Caps match tauri.conf.json.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let raf = 0
+    const check = () => {
+      raf = 0
+      const needH = Math.ceil(Math.max(el.getBoundingClientRect().height, el.scrollHeight)) + 16
+      const needW = Math.ceil(el.scrollWidth) + 16
+      const winH = window.innerHeight
+      const winW = window.innerWidth
+      if (needH <= winH + 1 && needW <= winW + 1) return
+      const h = Math.min(Math.max(winH, needH), 900)
+      const w = Math.min(Math.max(winW, needW), 800)
+      if (h === winH && w === winW) return
+      tauriBridge.resizeWindow(w, h).catch(err => console.error('[Window] Fit-to-content resize failed:', err))
+    }
+    const ro = new ResizeObserver(() => {
+      if (!raf) raf = requestAnimationFrame(check)
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+
   // Resize window for badge panels AND resize back when badges close
   useEffect(() => {
     if (shareModalBadge) {
@@ -2329,7 +2360,7 @@ function App() {
   return (
     <div className="w-full min-h-full bg-transparent">
       {/* Main container - flex column, centered */}
-      <div className="flex flex-col items-center">
+      <div ref={contentRef} className="flex flex-col items-center">
 
         {/* FloatingHUD via Adapter - uses bandwidth engine values */}
         <HUDAdapter
