@@ -21,17 +21,32 @@ export function FloatingHUD({
   onOpenParkingLot,
   onReset,
   onOpenHistory,
+  onOpenSettings,
 }: FloatingHUDProps) {
   const bandwidthValue = bandwidthScore ?? 0
   const bandwidthColor = getBandwidthColor(bandwidthScore)
   const modeStyles = getModeStyles(sessionMode)
   const isPaused = mode === "paused"
 
+  // The status text sits between the bandwidth ring (left) and the buttons
+  // (right). Count the buttons this mode renders so the text never slides
+  // under them: 32px each, 4px gap, 8px edge, 8px breathing room.
+  const idleLike = mode === "idle" || mode === "estimated"
+  const buttonCount =
+    1 + // parking lot, always rendered
+    (idleLike ? 3 : 0) + // settings, start, progress
+    (mode === "not-calibrated" ? 1 : 0) +
+    (idleLike && onReset ? 1 : 0) +
+    (mode === "session" && onPauseSession ? 1 : 0) +
+    (mode === "paused" && onResumeSession ? 1 : 0) +
+    ((mode === "session" || mode === "paused") && onStopSession ? 1 : 0)
+  const textRightInset = 8 + buttonCount * 32 + Math.max(0, buttonCount - 1) * 4 + 8
+
   return (
     <div
       className="relative overflow-visible"
       style={{
-        width: "320px",
+        width: "360px",
         height: "60px",
       }}
     >
@@ -103,7 +118,7 @@ export function FloatingHUD({
           )}
         </div>
 
-        <div className="absolute left-14 right-20 top-0 h-full flex flex-col items-center justify-center gap-0.5">
+        <div className="absolute left-14 top-0 h-full flex flex-col items-center justify-center gap-0.5 overflow-hidden" style={{ right: textRightInset }}>
           {mode === "session" || mode === "paused" ? (
             <>
               <div className="flex items-center gap-2">
@@ -164,7 +179,7 @@ export function FloatingHUD({
                   </div>
                 )}
               </div>
-              <span className="text-[10px] text-zinc-600">
+              <span className="text-[10px] text-zinc-600 max-w-full truncate">
                 {isStreakAtRisk ? "Streak at risk! Start a session" : "Start your session"}
               </span>
             </>
@@ -182,6 +197,20 @@ export function FloatingHUD({
               title="Parking Lot"
             >
               ☰
+            </button>
+          )}
+
+          {/* Settings: night mode, tone, prompt style, AI-site pause */}
+          {(mode === "idle" || mode === "estimated") && onOpenSettings && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenSettings()
+              }}
+              className="w-8 h-8 rounded-full bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 flex items-center justify-center text-zinc-300 text-xs transition-colors"
+              title="Settings"
+            >
+              ⚙
             </button>
           )}
 

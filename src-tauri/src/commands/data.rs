@@ -9,6 +9,8 @@ use crate::models::{
     RecoveryData, ReflectionObject, SessionRecord,
 };
 use crate::storage;
+use crate::storage::preferences::Preferences;
+use crate::storage::night::NightEvent;
 use crate::storage::user::UserData;
 use crate::AppState;
 
@@ -234,6 +236,72 @@ pub fn get_user(state: State<AppState>) -> Result<Option<UserData>, String> {
 }
 
 // ============================================
+// PREFERENCES COMMANDS
+// ============================================
+
+#[tauri::command]
+pub fn get_preferences(state: State<AppState>) -> Result<Preferences, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::preferences::get_preferences(&conn)
+}
+
+#[tauri::command]
+pub fn save_preferences(state: State<AppState>, prefs: Preferences) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::preferences::save_preferences(&conn, &prefs)
+}
+
+// ============================================
+// NIGHT MODE EVENTS (STOP screen, overrides, can't sleep, shutdown, session end)
+// ============================================
+
+#[tauri::command]
+pub fn record_night_event(
+    state: State<AppState>,
+    night_date: String,
+    kind: String,
+    detail: Option<String>,
+) -> Result<NightEvent, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::night::record_night_event(&conn, &night_date, &kind, detail.as_deref())
+}
+
+#[tauri::command]
+pub fn get_night_events(state: State<AppState>, night_date: String) -> Result<Vec<NightEvent>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::night::get_night_events(&conn, &night_date)
+}
+
+#[tauri::command]
+pub fn count_night_events(
+    state: State<AppState>,
+    night_date: String,
+    kind: String,
+) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::night::count_night_events(&conn, &night_date, &kind)
+}
+
+#[tauri::command]
+pub fn count_nights_with_event_since(
+    state: State<AppState>,
+    since_date: String,
+    kind: String,
+) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::night::count_nights_with_event_since(&conn, &since_date, &kind)
+}
+
+#[tauri::command]
+pub fn get_latest_night_event(
+    state: State<AppState>,
+    kind: String,
+) -> Result<Option<NightEvent>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    storage::night::get_latest_night_event(&conn, &kind)
+}
+
+// ============================================
 // UTILITY COMMANDS
 // ============================================
 
@@ -258,6 +326,8 @@ pub fn reset_all_data(state: State<AppState>) -> Result<(), String> {
     storage::calibration::clear_all_calibrations(&conn)?;
     storage::recovery::clear_recovery_data(&conn)?;
     storage::user::clear_user(&conn)?;
+    storage::preferences::clear_preferences(&conn)?;
+    storage::night::clear_night_events(&conn)?;
 
     Ok(())
 }

@@ -5,6 +5,8 @@ pub mod reflection;
 pub mod parking_lot;
 pub mod recovery;
 pub mod user;
+pub mod preferences;
+pub mod night;
 
 pub use database::*;
 pub use calibration::*;
@@ -13,6 +15,8 @@ pub use reflection::*;
 pub use parking_lot::*;
 pub use recovery::*;
 pub use user::*;
+pub use preferences::*;
+pub use night::*;
 
 // Re-export for use by Tauri commands
 #[allow(unused_imports)]

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react"
 import type { ResetPanelProps, RitualType, RitualOption, RitualCompletionData } from "./types"
 import { TimerHalo } from "@/components/animations/TimerHalo"
 
-export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, sessionMode = "Zen" }: ResetPanelProps) {
+export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, sessionMode = "Zen", copy }: ResetPanelProps) {
   const [activeRitual, setActiveRitual] = useState<RitualType | null>(null)
   const [timeRemaining, setTimeRemaining] = useState(0)
   
@@ -35,6 +35,12 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
       label: "Personal",
       duration: 240,
       description: "Conversation, bathroom break",
+    },
+    {
+      id: "shutdown",
+      label: "Shutdown",
+      duration: 900,
+      description: "Close the day in three steps",
     },
   ]
 
@@ -68,6 +74,12 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
   }, [activeRitual, timeRemaining, onClose, onRitualComplete])
 
   const handleSelectRitual = (ritual: RitualOption) => {
+    // The Shutdown Protocol is a guided flow, not a countdown. Hand off.
+    if (ritual.id === "shutdown") {
+      onSelectRitual(ritual.id)
+      return
+    }
+
     // Start tracking actual time
     ritualStartTime.current = Date.now()
     plannedDuration.current = ritual.duration
@@ -120,6 +132,9 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
               <p className="text-sm text-zinc-400 mt-2">
                 {ritualOptions.find((r) => r.id === activeRitual)?.description}
               </p>
+              {copy?.prompt && (
+                <p className="text-xs text-emerald-200/70 italic mt-3 px-4 leading-relaxed">{copy.prompt}</p>
+              )}
             </div>
 
             {/* Centered countdown with pulse ring animation */}
@@ -140,8 +155,8 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
           // Ritual selection view
           <div className="space-y-6">
             <div className="text-center">
-              <h2 className="text-xl font-light text-emerald-400">Choose Your Reset</h2>
-              <p className="text-sm text-zinc-400 mt-2">Take a moment to recharge and return focused</p>
+              <h2 className="text-xl font-light text-emerald-400">{copy?.heading ?? "Choose Your Reset"}</h2>
+              <p className="text-sm text-zinc-400 mt-2">{copy?.subheading ?? "Take a moment to recharge and return focused"}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -149,7 +164,9 @@ export function ResetPanel({ isOpen, onClose, onSelectRitual, onRitualComplete, 
                 <button
                   key={ritual.id}
                   onClick={() => handleSelectRitual(ritual)}
-                  className="p-4 rounded-lg border border-zinc-700 bg-[#0a0f0d]/80 hover:bg-zinc-800/50 hover:border-emerald-500 transition-all group text-center"
+                  className={`p-4 rounded-lg border border-zinc-700 bg-[#0a0f0d]/80 hover:bg-zinc-800/50 hover:border-emerald-500 transition-all group text-center ${
+                    ritual.id === "shutdown" ? "col-span-2" : ""
+                  }`}
                 >
                   <div className="text-sm font-light text-emerald-400 transition-colors mb-1">{ritual.label}</div>
                   <div className="text-xs text-zinc-500 mb-2">{ritual.description}</div>

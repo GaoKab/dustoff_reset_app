@@ -1,4 +1,6 @@
-export type RitualType = "breath" | "walk" | "dump" | "personal"
+// "shutdown" is the three-step night-mode Shutdown Protocol. It has no
+// countdown here; selecting it hands off to the ShutdownPanel.
+export type RitualType = "breath" | "walk" | "dump" | "personal" | "shutdown"
 
 export interface RitualOption {
   id: RitualType
@@ -20,4 +22,10 @@ export interface ResetPanelProps {
   onSelectRitual: (ritualType: RitualType) => void
   onRitualComplete?: (data: RitualCompletionData) => void  // Called when ritual actually finishes
   sessionMode?: "Zen" | "Flow" | "Legend"
+  /** Wording from the tone/prompt-style table; falls back to the built-in text */
+  copy?: {
+    heading: string
+    subheading: string
+    prompt: string
+  }
 }

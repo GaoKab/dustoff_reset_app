@@ -2,6 +2,7 @@
 // Type-safe wrappers for all Tauri commands
 // This provides a clean API for React components to interact with the Rust backend
 
+import type { Preferences } from '@/lib/preferences/types'
 import { invoke } from '@tauri-apps/api/core'
 import type {
   CalibrationData,
@@ -11,6 +12,8 @@ import type {
   ParkingLotItemUpdate,
   RecoveryData,
   UserData,
+  NightEvent,
+  NightEventKind,
 } from './tauri-types'
 import type { TelemetryEvent } from './telemetry'
 import type { 
@@ -134,6 +137,35 @@ export const tauriBridge = {
 
   getUser: (): Promise<UserData | null> =>
     invoke('get_user'),
+
+  // ============================================
+  // PREFERENCES (night mode, tone, prompt style, AI pause)
+  // ============================================
+
+  getPreferences: (): Promise<Preferences> =>
+    invoke('get_preferences'),
+
+  savePreferences: (prefs: Preferences): Promise<void> =>
+    invoke('save_preferences', { prefs }),
+
+  // ============================================
+  // NIGHT MODE EVENTS
+  // ============================================
+
+  recordNightEvent: (nightDate: string, kind: NightEventKind, detail?: string): Promise<NightEvent> =>
+    invoke('record_night_event', { nightDate, kind, detail: detail ?? null }),
+
+  getNightEvents: (nightDate: string): Promise<NightEvent[]> =>
+    invoke('get_night_events', { nightDate }),
+
+  countNightEvents: (nightDate: string, kind: NightEventKind): Promise<number> =>
+    invoke('count_night_events', { nightDate, kind }),
+
+  countNightsWithEventSince: (sinceDate: string, kind: NightEventKind): Promise<number> =>
+    invoke('count_nights_with_event_since', { sinceDate, kind }),
+
+  getLatestNightEvent: (kind: NightEventKind): Promise<NightEvent | null> =>
+    invoke('get_latest_night_event', { kind }),
 
   // ============================================
   // UTILITIES

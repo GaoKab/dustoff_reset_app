@@ -18,6 +18,11 @@ interface HUDAdapterProps {
   // Streak display
   streakCount?: number
   isStreakAtRisk?: boolean
+  // Night mode: soften the HUD inside the night window
+  dimmed?: boolean
+  // Night mode: one-line note shown as the HUD tooltip so the drift
+  // multiplier is never a hidden rule (null by day)
+  nightNote?: string | null
   
   // Callbacks
   onStartSession: () => void
@@ -41,6 +46,8 @@ export function HUDAdapter({
   isInFlow,
   streakCount,
   isStreakAtRisk,
+  dimmed = false,
+  nightNote = null,
   onStartSession,
   onPauseSession,
   onResumeSession,
@@ -99,7 +106,12 @@ export function HUDAdapter({
     <div 
       data-drag-region
       onMouseDown={handleDragStart}
-      className="cursor-grab active:cursor-grabbing"
+      className="cursor-grab active:cursor-grabbing transition-all duration-1000"
+      title={nightNote ?? undefined}
+      style={{
+        opacity: dimmed ? 0.72 : 1,
+        filter: dimmed ? 'saturate(0.7) brightness(0.9)' : undefined,
+      }}
     >
       <FloatingHUD
         isCalibratedToday={isCalibrated}

@@ -26,8 +26,8 @@ import type { BadgeDefinition } from '@/lib/badges/types'
 import { 
   setupTelemetryListeners, 
   cleanupTelemetryListeners,
-  calculateAppSwitchPenalty,
-  calculateDomainPenalty,
+  calculateAppSwitchPenalty as calculateAppSwitchPenaltyBase,
+  calculateDomainPenalty as calculateDomainPenaltyBase,
   calculateBonus,
   getAppCategory,
   getDomainCategory,
@@ -72,6 +72,25 @@ import type { ExtensionMinutes } from '@/features/desktop/modals/TimeUpModal'
 import { useCalendar } from '@/hooks/useCalendar'
 import { PreMeetingNudge } from '@/components/PreMeetingNudge'
 import { ProgressPanelAdapter } from '@/components/panels/ProgressPanelAdapter'
+
+// Absorbed from the Chrome extension: preferences, night mode, tone/style copy, AI-site pause
+import { usePreferences } from '@/hooks/usePreferences'
+import type { ScheduleMode, Preferences } from '@/lib/preferences/types'
+import { useAiSitePause } from '@/hooks/useAiSitePause'
+import { useNightMode } from '@/hooks/useNightMode'
+import { applyToneToIntervention, getAiPauseCopy, type CopyContext } from '@/lib/copy'
+import { SettingsPanelAdapter } from '@/components/panels/SettingsPanelAdapter'
+import { AiPauseOverlay } from '@/features/desktop/overlays/AiPauseOverlay'
+import { WindDownCard, ShutdownNudge, OverrideCountdownCard, LateStartLine, ScheduleSetupCard, SavedLine } from '@/components/NightNudges'
+import { PanelErrorBoundary } from '@/components/PanelErrorBoundary'
+import {
+  settingsSavedLine,
+  panelAfterSettingsSave,
+  nightProtectionMayTakeOver,
+  type SettingsOrigin,
+} from '@/lib/settings-flow'
+import { ShutdownPanel } from '@/features/desktop/panels/ShutdownPanel'
+import { NightProtectionPanel } from '@/features/desktop/panels/NightProtectionPanel'
 
 // DEV ONLY - Badge Test Panel (remove before production)
 import { BadgeTestPanel } from '@/components/dev/BadgeTestPanel'
@@ -127,7 +146,7 @@ function App() {
             tauriBridge.resizeWindow(650, 700)
           } else {
             // Restore to HUD size (will be resized again by other effects if panel is open)
-            tauriBridge.resizeWindow(320, 80)
+            tauriBridge.resizeWindow(360, 80)
           }
           
           return newState
@@ -198,7 +217,7 @@ function App() {
   // Reset framing: why the reset panel was opened ('critical' hard stop,
   // 'landing' after a rough session ending, 'pre-meeting' before a calendar
   // event, or null for a plain reset)
-  const [resetContext, setResetContext] = useState<'critical' | 'landing' | 'pre-meeting' | null>(null)
+  const [resetContext, setResetContext] = useState<'critical' | 'landing' | 'pre-meeting' | 'night' | null>(null)
   // Set when a session ends unfinished; offers a landing reset after the post-session flow
   const pendingLandingResetRef = useRef(false)
   // Pre-meeting nudge dismissal (keyed per event so each meeting nudges once)
@@ -335,6 +354,155 @@ function App() {
   }
 
   // ============================================
+  // PREFERENCES, NIGHT MODE, COPY CONTEXT, AI-SITE PAUSE
+  // (absorbed from the retired Chrome extension)
+  // ============================================
+  const { preferences, preferencesRef, isLoaded: preferencesLoaded, updatePreferences } = usePreferences()
+
+  // Three-phase night mode: phase tick, once-per-night cards, STOP screen,
+  // emergency override and event recording live in src/hooks/useNightMode
+  const night = useNightMode({
+    preferences,
+    preferencesRef,
+    ready: mode === 'idle' || mode === 'session' || mode === 'paused',
+    sessionActive: mode === 'session' || mode === 'paused',
+    calibrationScore: calibration?.calibrationScore ?? null,
+  })
+  const nightPhase = night.nightPhase
+
+  // Night drift multiplier (wind-down 1.2, shutdown 1.5, night protection
+  // 2.0, gentle capped at 1.2). Wrapping the calculators here means every
+  // telemetry call site (recovery and the three start paths) applies it.
+  const calculateAppSwitchPenalty: typeof calculateAppSwitchPenaltyBase = (toApp, sessionMode, offense, whitelisted) =>
+    calculateAppSwitchPenaltyBase(toApp, sessionMode, offense, whitelisted, night.multiplierNow())
+  const calculateDomainPenalty: typeof calculateDomainPenaltyBase = (domain, sessionMode, offense, whitelisted) =>
+    calculateDomainPenaltyBase(domain, sessionMode, offense, whitelisted, night.multiplierNow())
+
+  const copyContext: CopyContext = {
+    tone: preferences.tone,
+    promptStyle: preferences.promptStyle,
+    nightPhase,
+  }
+
+  // Tone gating for telemetry escalation: gentle never opens a delay gate
+  const getTonedInterventionConfig: typeof getInterventionConfig = (...args) =>
+    applyToneToIntervention(getInterventionConfig(...args), preferencesRef.current.tone)
+
+  // "Hold. Stay here." when tabbing away from an AI chat mid-answer (macOS only)
+  const aiPause = useAiSitePause({
+    enabled: preferences.aiPauseEnabled,
+    isSessionActive: mode === 'session',
+    tone: preferences.tone,
+  })
+  const aiPauseVisible =
+    aiPause.isVisible &&
+    !currentPanel &&
+    !delayGateState.isOpen &&
+    !blockScreenState.isOpen &&
+    !showInterventionOverlay
+
+  // Cards under the HUD: wind-down once per evening, the shutdown offer
+  // once per evening, the override countdown while one runs. Never forced.
+  const cardsAllowed = !currentPanel && !showEndSessionModal && !showTimeUpModal && !preMeetingNudgeVisible
+  // First run: "When do you usually work?" once, remembered in preferences.
+  // Shown at the first idle moment, ahead of the night cards.
+  const scheduleCardVisible = cardsAllowed && mode === 'idle' && preferencesLoaded && !preferences.scheduleSetupDone
+  const windDownCardVisible = cardsAllowed && !scheduleCardVisible && night.windDown.visible
+  const shutdownNudgeVisible = cardsAllowed && !scheduleCardVisible && !windDownCardVisible && night.shutdown.nudgeVisible
+  const overrideCardVisible = !currentPanel && night.override.active
+
+  // Settings: where it was opened from (decides where Save returns to),
+  // the fields to preselect in its draft, and the one-line confirmation
+  // shown after a save so the close is never silent.
+  const [settingsOrigin, setSettingsOrigin] = useState<SettingsOrigin | null>(null)
+  const [settingsInitialPatch, setSettingsInitialPatch] = useState<Partial<Preferences> | null>(null)
+  const [savedLine, setSavedLine] = useState<string | null>(null)
+  useEffect(() => {
+    if (!savedLine) return
+    const id = setTimeout(() => setSavedLine(null), 8000)
+    return () => clearTimeout(id)
+  }, [savedLine])
+
+  // Open "How do you want to start?", through the night gate like the HUD
+  // button does: during night protection the STOP screen comes first
+  // (the panel slot is freed so it can), and dismissing it still proceeds.
+  const openEntryPoint = () => {
+    setCurrentPanel(night.protection.requestSessionStart() ? 'entryPoint' : null)
+  }
+
+  const handleScheduleChoice = (scheduleMode: ScheduleMode) => {
+    if (scheduleMode === 'standard') {
+      // Nothing to fill in: one save, a confirmation, and on to the entry point
+      updatePreferences({ scheduleMode, scheduleSetupDone: true })
+      setSavedLine(settingsSavedLine(preferencesRef.current))
+      openEntryPoint()
+      return
+    }
+    // A shift or custom schedule needs days and hours: open Settings with
+    // the mode preselected. Nothing is saved until Save is tapped there.
+    setSettingsInitialPatch({ scheduleMode, scheduleSetupDone: true })
+    setSettingsOrigin({ from: 'setup' })
+    setCurrentPanel('settings')
+  }
+  const handleScheduleLater = () => {
+    updatePreferences({ scheduleSetupDone: true })
+  }
+
+  const handleSettingsSave = (patch: Partial<Preferences>) => {
+    updatePreferences(patch)
+    setSavedLine(settingsSavedLine(preferencesRef.current))
+    const next = panelAfterSettingsSave(settingsOrigin)
+    if (next === 'entryPoint') openEntryPoint()
+    else setCurrentPanel(next)
+    setSettingsOrigin(null)
+    setSettingsInitialPatch(null)
+  }
+  const handleSettingsCancel = () => {
+    setCurrentPanel(settingsOrigin?.from === 'hud' && settingsOrigin.returnTo !== 'settings' ? settingsOrigin.returnTo : null)
+    setSettingsOrigin(null)
+    setSettingsInitialPatch(null)
+  }
+
+  // Show the STOP screen as a full panel whenever night protection asks for
+  // it, but only when no other panel is open: Settings, a wizard or a
+  // summary is never replaced mid-use. The screen waits until they close.
+  useEffect(() => {
+    if (night.protection.visible && nightProtectionMayTakeOver(currentPanel)) setCurrentPanel('nightProtection')
+  }, [night.protection.visible, currentPanel])
+
+  // Shutdown protocol: offered once per evening, also a reset type
+  const handleShutdownStart = () => {
+    night.shutdown.dismissNudge()
+    setResetContext(null)
+    setCurrentPanel('shutdown')
+  }
+
+  const handleShutdownClose = () => {
+    setCurrentPanel(null)
+  }
+
+  // Night protection: dismissing never blocks. If the STOP screen came from
+  // a session start request, dismissing lets that start proceed.
+  const handleProtectionDismiss = () => {
+    const trigger = night.protection.trigger
+    night.protection.hide()
+    setCurrentPanel(trigger === 'session_start' ? 'entryPoint' : null)
+  }
+
+  const handleProtectionOverride = () => {
+    const trigger = night.protection.trigger
+    if (night.override.start()) {
+      setCurrentPanel(trigger === 'session_start' ? 'entryPoint' : null)
+    }
+  }
+
+  const handleOpenSettings = () => {
+    setSettingsInitialPatch(null)
+    setSettingsOrigin({ from: 'hud', returnTo: currentPanel })
+    setCurrentPanel('settings')
+  }
+
+  // ============================================
   // BADGES HOOK
   // ============================================
   const { evaluateSession, dailyStreak, totalBadges, unlockedCount, isStreakAtRisk: checkStreakAtRisk } = useBadges()
@@ -377,19 +545,55 @@ function App() {
     }
   }, [showPermissionSetup])
 
-  // Resize window when end session / time-up modal opens (or the
-  // pre-meeting nudge needs room below the HUD)
+  // Resize window when end session / time-up modal opens (or one of the
+  // cards under the HUD needs room: pre-meeting nudge, night cards,
+  // AI-site pause)
+  const cardBelowHudVisible =
+    preMeetingNudgeVisible || scheduleCardVisible || windDownCardVisible || shutdownNudgeVisible || overrideCardVisible || aiPauseVisible ||
+    savedLine !== null
+  const tallCardVisible = windDownCardVisible || scheduleCardVisible
   useEffect(() => {
     if (showEndSessionModal || showTimeUpModal) {
       resizeForPanel('endSession')
     } else if (!currentPanel) {
-      if (preMeetingNudgeVisible) {
-        tauriBridge.resizeWindow(320, 220)
+      if (cardBelowHudVisible) {
+        tauriBridge.resizeWindow(360, tallCardVisible ? 440 : 240).catch(err => console.error('[Window] Resize failed:', err))
       } else {
         resizeForPanel(null) // Back to HUD only
       }
     }
-  }, [showEndSessionModal, showTimeUpModal, currentPanel, preMeetingNudgeVisible])
+  }, [showEndSessionModal, showTimeUpModal, currentPanel, cardBelowHudVisible, tallCardVisible])
+
+  // Safety net against clipped panels. PANEL_DIMENSIONS is a plan; the
+  // rendered content is the truth. If what is on screen is taller or wider
+  // than the window, grow the window to fit. Never shrinks here (the table
+  // handles shrinking on panel change). Caps match tauri.conf.json.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let raf = 0
+    const check = () => {
+      raf = 0
+      const needH = Math.ceil(Math.max(el.getBoundingClientRect().height, el.scrollHeight)) + 16
+      const needW = Math.ceil(el.scrollWidth) + 16
+      const winH = window.innerHeight
+      const winW = window.innerWidth
+      if (needH <= winH + 1 && needW <= winW + 1) return
+      const h = Math.min(Math.max(winH, needH), 900)
+      const w = Math.min(Math.max(winW, needW), 800)
+      if (h === winH && w === winW) return
+      tauriBridge.resizeWindow(w, h).catch(err => console.error('[Window] Fit-to-content resize failed:', err))
+    }
+    const ro = new ResizeObserver(() => {
+      if (!raf) raf = requestAnimationFrame(check)
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
 
   // Resize window for badge panels AND resize back when badges close
   useEffect(() => {
@@ -526,6 +730,7 @@ function App() {
     }
 
     const finalSession = await sessionManager.endSession(reason, subReason)
+    night.recordSessionEnd(bandwidthEngine.current)
 
     if (finalSession) {
       console.log('[App] Session ended:', {
@@ -698,6 +903,7 @@ function App() {
       // Setup telemetry listeners (same as handleSessionStart)
       const cleanup = await setupTelemetryListeners({
         onAppSwitch: (event) => {
+          night.protection.noteActivity()
           if (!event.appInfo) return
           
           const appName = event.appInfo.appName
@@ -730,6 +936,7 @@ function App() {
           }
         },
         onTabSwitch: (event) => {
+          night.protection.noteActivity()
           if (!event.browserTab?.domain) return
           
           const domain = event.browserTab.domain
@@ -784,6 +991,8 @@ function App() {
   // ============================================
 
   const handleStartSession = () => {
+    // Night protection asks first (STOP screen); dismissing it still proceeds
+    if (!night.protection.requestSessionStart()) return
     setCurrentPanel('entryPoint')
   }
 
@@ -843,6 +1052,7 @@ function App() {
           console.log('[Telemetry] Setting up listeners first...')
           const cleanup = await setupTelemetryListeners({
             onAppSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.appInfo) return
               
               const appName = event.appInfo.appName
@@ -903,7 +1113,7 @@ function App() {
                 sessionManager.recordDistraction(penaltyResult.categoryName)
                 sessionManager.addTimelineBlock('distracted')
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   event.appInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -945,6 +1155,7 @@ function App() {
               }
             },
             onTabSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.browserTab?.domain) return
               
               const domain = event.browserTab.domain
@@ -988,7 +1199,7 @@ function App() {
                   activeSince: Date.now(),
                 }
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   mockAppInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1123,6 +1334,7 @@ function App() {
           console.log('[Telemetry] Setting up listeners first...')
           const cleanup = await setupTelemetryListeners({
             onAppSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.appInfo) return
               
               const appName = event.appInfo.appName
@@ -1183,7 +1395,7 @@ function App() {
                 sessionManager.recordDistraction(penaltyResult.categoryName)
                 sessionManager.addTimelineBlock('distracted')
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   event.appInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1225,6 +1437,7 @@ function App() {
               }
             },
             onTabSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.browserTab?.domain) return
               
               const domain = event.browserTab.domain
@@ -1268,7 +1481,7 @@ function App() {
                   activeSince: Date.now(),
                 }
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   mockAppInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1406,6 +1619,7 @@ function App() {
           console.log('[Telemetry] Setting up listeners first...')
           const cleanup = await setupTelemetryListeners({
             onAppSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.appInfo) return
               
               const appName = event.appInfo.appName
@@ -1473,7 +1687,7 @@ function App() {
                 sessionManager.addTimelineBlock('distracted')
                 
                 // Get intervention config based on mode
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   event.appInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1517,6 +1731,7 @@ function App() {
               }
             },
             onTabSwitch: (event) => {
+          night.protection.noteActivity()
               if (!event.browserTab?.domain) return
               
               const domain = event.browserTab.domain
@@ -1566,7 +1781,7 @@ function App() {
                   activeSince: Date.now(),
                 }
                 
-                const intervention = getInterventionConfig(
+                const intervention = getTonedInterventionConfig(
                   mockAppInfo,
                   sessionMode,
                   offenseCountRef.current,
@@ -1761,7 +1976,32 @@ function App() {
 
     // Quick exit - end session without going through reflection flow
     await sessionManager.endSession('stopping_early', 'Quick exit')
+    night.recordSessionEnd(bandwidthEngine.current)
     
+    setMode('idle')
+    setCurrentPanel(null)
+  }
+
+  // Night protection "Close for tonight": end any session quietly and return
+  // to the dimmed idle HUD. No reflection flow at this hour.
+  const handleCloseForTonight = async () => {
+    night.protection.markClosedForTonight()
+    if (mode === 'session' || mode === 'paused') {
+      try {
+        telemetryStats.deactivate()
+        await tauriBridge.stopTelemetryMonitor()
+        if (telemetryCleanupRef.current) {
+          telemetryCleanupRef.current()
+          telemetryCleanupRef.current = null
+        }
+      } catch (telemetryError) {
+        console.error('[Telemetry] Failed to stop monitor:', telemetryError)
+      }
+      await sessionManager.endSession('stopping_early', 'Closed for the night')
+      night.recordSessionEnd(bandwidthEngine.current)
+    }
+    setShowEndSessionModal(false)
+    setShowTimeUpModal(false)
     setMode('idle')
     setCurrentPanel(null)
   }
@@ -1812,6 +2052,11 @@ function App() {
   }
 
   const handleResetComplete = (ritualType: RitualType) => {
+    // The Shutdown Protocol is a guided flow, not a timed ritual
+    if (ritualType === 'shutdown') {
+      handleShutdownStart()
+      return
+    }
     // Called when ritual is SELECTED (not completed)
     // NO bonus awarded here - wait for actual completion
     console.log('Reset ritual started:', ritualType)
@@ -2095,7 +2340,7 @@ function App() {
   if (mode === 'loading') {
     return (
       <div className="w-full h-full bg-transparent flex items-center justify-center">
-        <div className="w-[320px] h-[60px] rounded-full bg-[#0a0f0d]/90 backdrop-blur-xl border border-[#2f4a42]/40 shadow-2xl flex items-center justify-center">
+        <div className="w-[360px] h-[60px] rounded-full bg-[#0a0f0d]/90 backdrop-blur-xl border border-[#2f4a42]/40 shadow-2xl flex items-center justify-center">
           <div className="text-cyan-400 animate-pulse">Initializing...</div>
         </div>
       </div>
@@ -2115,7 +2360,7 @@ function App() {
   return (
     <div className="w-full min-h-full bg-transparent">
       {/* Main container - flex column, centered */}
-      <div className="flex flex-col items-center">
+      <div ref={contentRef} className="flex flex-col items-center">
 
         {/* FloatingHUD via Adapter - uses bandwidth engine values */}
         <HUDAdapter
@@ -2137,7 +2382,14 @@ function App() {
           onCalibrate={handleCalibrate}
           onReset={handleReset}
           onOpenHistory={handleOpenProgress}
+          onOpenSettings={handleOpenSettings}
+          dimmed={nightPhase !== 'day'}
+          nightNote={night.nightNote}
         />
+
+        {/* Everything below the HUD is fenced: a render error in a card or
+            panel shows one line under the HUD instead of blanking the app */}
+        <PanelErrorBoundary resetKey={currentPanel} onReset={() => setCurrentPanel(null)}>
 
         {/* Pre-meeting nudge - arrive at the next event with capacity */}
         {preMeetingNudgeVisible && calendar.nextEvent && (
@@ -2148,6 +2400,33 @@ function App() {
             onDismiss={handleNudgeDismiss}
           />
         )}
+
+        {/* After Settings saves: one line, above whatever is open */}
+        {savedLine && <SavedLine text={savedLine} />}
+
+        {/* First run: when do you usually work? Once, remembered. */}
+        {scheduleCardVisible && (
+          <ScheduleSetupCard onChoose={handleScheduleChoice} onLater={handleScheduleLater} />
+        )}
+
+        {/* Night mode cards: wind-down once per evening, shutdown offer once
+            per evening, override countdown while one runs. Never forced. */}
+        {windDownCardVisible && (
+          <WindDownCard estimateMinutes={night.windDown.estimateMinutes} onDismiss={night.windDown.dismiss} />
+        )}
+        {shutdownNudgeVisible && (
+          <ShutdownNudge onStart={handleShutdownStart} onDismiss={night.shutdown.dismissNudge} />
+        )}
+        {overrideCardVisible && (
+          <OverrideCountdownCard
+            secondsLeft={night.override.secondsLeft}
+            totalSeconds={night.override.totalSeconds}
+            onEnd={night.override.end}
+          />
+        )}
+
+        {/* AI-site pause: Hold. Stay here. (non-blocking, fades on its own) */}
+        <AiPauseOverlay isOpen={aiPauseVisible} copy={getAiPauseCopy(copyContext)} />
 
         {/* Recovery Modal - shows when session was interrupted */}
         {mode === 'recovery' && recoveryData && (
@@ -2168,6 +2447,7 @@ function App() {
             type={interventionType}
             mode={sessionModeForHUD}
             currentBandwidth={bandwidthEngine.current}
+            copyContext={copyContext}
             onDismiss={handleInterventionDismiss}
             onReset={handleInterventionAction}
           />
@@ -2225,6 +2505,7 @@ function App() {
         {/* Entry Point Panel */}
         {currentPanel === 'entryPoint' && (
           <PanelContainer isOpen={true}>
+            {(nightPhase === 'shutdown' || nightPhase === 'night-protection') && <LateStartLine />}
             <EntryPointPanel
               onSelectQuickStart={handleSelectQuickStart}
               onSelectPreset={handleSelectPreset}
@@ -2291,6 +2572,41 @@ function App() {
           />
         )}
 
+        {currentPanel === 'settings' && (
+          <SettingsPanelAdapter
+            isOpen={true}
+            preferences={preferences}
+            initialPatch={settingsInitialPatch}
+            onSave={handleSettingsSave}
+            onClose={handleSettingsCancel}
+          />
+        )}
+
+        {/* Night mode: Shutdown Protocol (three steps, about 15 minutes) */}
+        {currentPanel === 'shutdown' && (
+          <PanelContainer isOpen={true}>
+            <ShutdownPanel onComplete={night.shutdown.markCompleted} onClose={handleShutdownClose} />
+          </PanelContainer>
+        )}
+
+        {/* Night mode: STOP screen. Dismissible, never locks the machine. */}
+        {currentPanel === 'nightProtection' && night.protection.visible && (
+          <PanelContainer isOpen={true}>
+            <NightProtectionPanel
+              key={`${night.protection.view}-${night.protection.trigger ?? ''}`}
+              bandwidthScore={night.protection.bandwidthScore}
+              overrideUsedTonight={night.override.usedTonight}
+              overrideEnabled={preferences.emergencyOverrideEnabled}
+              initialView={night.protection.view}
+              onStartOverride={handleProtectionOverride}
+              onCantSleep={() => night.protection.recordChoice('cant_sleep')}
+              onHabit={() => night.protection.recordChoice('habit')}
+              onCloseForTonight={handleCloseForTonight}
+              onDismiss={handleProtectionDismiss}
+            />
+          </PanelContainer>
+        )}
+
         {currentPanel === 'reset' && (
           <ResetPanelAdapter
             isOpen={true}
@@ -2299,6 +2615,7 @@ function App() {
             onRitualComplete={handleRitualComplete}
             sessionMode={sessionModeForHUD}
             context={resetContext}
+            copyContext={copyContext}
           />
         )}
 
@@ -2374,7 +2691,8 @@ function App() {
             sessionId={sessionManager.sessionId || undefined}
           />
         )}
-       
+
+        </PanelErrorBoundary>
       </div>
       
       {/* DEV ONLY - Badge Test Panel (Cmd/Ctrl + Shift + B to toggle) */}

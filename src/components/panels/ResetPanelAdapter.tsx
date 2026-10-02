@@ -5,6 +5,8 @@ import { PanelContainer } from '@/components/PanelContainer'
 import { ResetPanel } from '@/features/desktop/panels/ResetPanel'
 import type { RitualType, RitualCompletionData } from '@/features/desktop/panels/ResetPanel/types'
 import type { SessionMode } from '@/features/desktop/hud/FloatingHUD/types'
+import { useMemo } from 'react'
+import { getResetPanelCopy, NIGHT_COPY, DEFAULT_COPY_CONTEXT, type CopyContext } from '@/lib/copy'
 
 interface ResetPanelAdapterProps {
   isOpen: boolean
@@ -13,9 +15,11 @@ interface ResetPanelAdapterProps {
   onRitualComplete?: (data: RitualCompletionData) => void
   sessionMode?: SessionMode
   /** Why the panel opened: 'critical' hard stop, 'landing' after a rough
-   *  session ending, 'pre-meeting' ahead of a calendar event, or null for
-   *  a user-initiated reset */
-  context?: 'critical' | 'landing' | 'pre-meeting' | null
+   *  session ending, 'pre-meeting' ahead of a calendar event, 'night'
+   *  from a night mode nudge, or null for a user-initiated reset */
+  context?: 'critical' | 'landing' | 'pre-meeting' | 'night' | null
+  /** Tone, prompt style and night phase for the wording */
+  copyContext?: CopyContext
 }
 
 /**
@@ -33,6 +37,7 @@ interface ResetPanelAdapterProps {
  * - walk: 5 min walk break
  * - dump: 3 min thought dump
  * - personal: 4 min personal break
+ * - shutdown: the night-mode Shutdown Protocol (guided, no countdown here)
  */
 export function ResetPanelAdapter({
   isOpen,
@@ -41,7 +46,11 @@ export function ResetPanelAdapter({
   onRitualComplete,
   sessionMode = 'Flow',
   context = null,
+  copyContext = DEFAULT_COPY_CONTEXT,
 }: ResetPanelAdapterProps) {
+  // One prompt per opening of the panel, not one per render
+  const seed = useMemo(() => Date.now() / 60000, [])
+  const copy = getResetPanelCopy(copyContext, seed)
 
   const handleSelectRitual = (ritualType: RitualType) => {
     // Notify that ritual started (no bonus awarded yet!)
@@ -51,9 +60,9 @@ export function ResetPanelAdapter({
   return (
     <PanelContainer isOpen={isOpen}>
       {context === 'critical' && (
-        <div className="mb-3 p-3 rounded-xl border border-red-500/40 bg-red-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-red-500/40 bg-red-500/10">
           <p className="text-sm text-red-300 font-light">
-            Capacity critical — the session is paused.
+            Capacity critical. The session is paused.
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             Pushing through from here costs more than it produces. Take a short reset to come back up.
@@ -61,22 +70,32 @@ export function ResetPanelAdapter({
         </div>
       )}
       {context === 'pre-meeting' && (
-        <div className="mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
           <p className="text-sm text-cyan-300 font-light">
-            Meeting soon — arrive with capacity.
+            Meeting soon. Arrive with capacity.
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             A short reset now beats walking in drained.
           </p>
         </div>
       )}
+      {context === 'night' && (
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-indigo-400/40 bg-indigo-500/10">
+          <p className="text-sm text-indigo-200 font-light">
+            {NIGHT_COPY.shutdownNudgeTitle}
+          </p>
+          <p className="text-xs text-zinc-400 mt-1">
+            {NIGHT_COPY.shutdownNudgeBody}
+          </p>
+        </div>
+      )}
       {context === 'landing' && (
-        <div className="mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
           <p className="text-sm text-cyan-300 font-light">
             That session ended before you were done.
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            Land it properly — two minutes to reset before whatever's next. Or close this if you're good.
+            Land it properly: two minutes to reset before whatever is next. Or close this if you are good.
           </p>
         </div>
       )}
@@ -86,6 +105,7 @@ export function ResetPanelAdapter({
         onSelectRitual={handleSelectRitual}
         onRitualComplete={onRitualComplete}
         sessionMode={sessionMode}
+        copy={copy}
       />
     </PanelContainer>
   )

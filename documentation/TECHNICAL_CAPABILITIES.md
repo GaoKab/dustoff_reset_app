@@ -28,6 +28,7 @@ Dustoff Reset is a **cognitive capacity management system** that operates as a d
 12. [Window Management](#12-window-management)
 13. [Permission System](#13-permission-system)
 14. [Cross-Platform Support](#14-cross-platform-support)
+15. [v0.3.0-dev: Absorbed Extension Features](#15-v030-dev-absorbed-extension-features)
 
 ---
 
@@ -479,6 +480,7 @@ If app crashes during a session:
 | Decorations | None (frameless) |
 | Transparency | Yes (glassmorphism) |
 | Always on top | Yes (overlay) |
+| Visible on all desktops | Yes (macOS Spaces and Linux workspaces; no effect on Windows) |
 | Resizable | Yes (programmatic) |
 | Skip taskbar | Yes |
 
@@ -562,6 +564,61 @@ pub trait PlatformMonitor {
 
 ---
 
+## 15. v0.3.0-dev: Absorbed Extension Features
+
+The Chrome extension is being retired; the desktop app is the one tool. Its behaviours now live in the app. Everything is local (SQLite `preferences` and `night_events` tables, schema v5), nothing is forced, and the user can turn each piece off in the Settings panel (gear on the idle HUD).
+
+### 15.1 Night Mode (three phases)
+
+Ported from the extension's `night-mode.js` and the night-mode web client. Every behaviour below is a strong default with an escape hatch. Nothing locks the machine.
+
+- **Setting:** on by default. The four phase bounds (wind-down start, shutdown start, night protection start, night end) are derived from the person's work schedule (section 15.1a) and validated as a set on both sides (Rust `phase_bounds_in_order`, TypeScript `validatePhaseBounds`) so the phases always run in order around the clock. The standard clock is 20:00 / 22:00 / 00:00 / 06:00. An "Allow emergency override" toggle (default on).
+- **Phase resolution** (`src/lib/night`): `getNightPhase` returns `day`, `wind-down`, `shutdown` or `night-protection`, handling windows that cross midnight at any boundary. The app never calls it with raw preference fields: `resolveNight` in `src/lib/night/schedule.ts` is the one accessor that turns the schedule into the effective `NightSettings`, and `useNightMode` recomputes the phase and the night key through it every 30 seconds. The multiplier, the nudges, the STOP screen and the Shutdown Protocol offer all follow from that one phase value.
+- **Wind-down (20:00 to 22:00):** the HUD dims and desaturates; intervention copy shifts to wind-down wording. At the first idle moment a card is offered once per evening: "Time to start winding down", the original's activity list (checkable, not saved) and "About N minutes to wind down", where N is 15 plus 5 per full hour of today's sessions, capped at 60, rounded to 5 (`estimateWindDownMinutes`; the original's "night activation" score does not exist in the app, so session load is the honest stand-in).
+- **Shutdown Protocol (22:00 to 00:00):** offered once per evening at the first idle moment, and available any time as the "Shutdown" reset type. Three steps of about five minutes: (1) close open tasks, listing today's session intentions from SQLite with Done / Carry to tomorrow (carried tasks become Parking Lot items flagged for the next session); (2) brain dump, one Parking Lot item per line; (3) the physical transition checklist ("Stand up from your desk", "Close your laptop (really)", "Take 3 deep breaths", "Move to a different room") with a "Completed N of M" line. Completion is recorded as a `shutdown_completed` night event so it is not offered again that evening.
+- **Night Protection (00:00 to 06:00):** a full-panel STOP screen appears when the app is open in the window (once per night), when a session start is requested, or on the first telemetry activity in the window during a session (once per night). It never replaces a panel that is open (Settings, a wizard, a summary): `nightProtectionMayTakeOver` lets it in only when the panel slot is free, so it waits until that panel closes. A render error anywhere below the HUD is caught by `PanelErrorBoundary` and shown as one line ("Something went wrong. Tap to reopen.") instead of blanking the transparent window. It says "Opening your laptop now will make tomorrow worse." and "Your bandwidth was N when you stopped." (the last session-end bandwidth tonight, else today's calibration). Then "What's really going on?":
+  - *It is truly urgent*: the original's honesty questions, then a 30-minute emergency override with a visible countdown card under the HUD and a proper end screen ("Override ended. Close the laptop."). At most two overrides per night, counted from `night_events`; the Settings toggle can remove the option entirely.
+  - *I can't sleep*: the ported sleep techniques (4-7-8 breathing, body scan, tense and release, "still awake after 20 minutes") and calming exercises (5-4-3-2-1 grounding, box breathing, write it down). Percentages and claims from the originals were dropped.
+  - *It is habit, not need*: a one-line acknowledgement and "Close for tonight", which ends any session quietly and returns to the dimmed idle HUD.
+  - The X ("Not now") always closes the screen. If the STOP came from a session start request, dismissing lets the start proceed.
+- **Night drift multiplier:** during an active session, drift penalties are multiplied by phase, ported from the desktop agent: wind-down x1.2, shutdown x1.5, night protection x2.0. Gentle tone caps at x1.2. Applied in `calculateAppSwitchPenalty` / `calculateDomainPenalty` (`nightMultiplier` argument, wrapped once in App.tsx) and shown as the HUD tooltip ("Night multiplier active: drift costs x1.5 during shutdown.") so it is never a hidden rule.
+- **Insomnia line:** distinct nights in the last seven with an "I can't sleep" choice drive the original's graded wording ("You haven't reported sleep trouble this week." / one night / 2 nights / multiple nights), shown under a small "Nights" heading in the Progress panel and nowhere else. No advice, no medical language.
+- **Recording:** `night_events` rows (night date, kind, detail) for `wind_down_shown`, `shutdown_completed`, `protection_stop` (with its trigger), `override`, `cant_sleep`, `habit` and `session_end` (bandwidth). The night date is the **night key** from `nightKey(now, bounds)`: the local date on which that night's window starts. For a window that crosses midnight, anything before the window's end belongs to the previous date (01:30 belongs to the previous evening; the key turns over at the night's end, 06:00 on the standard clock). For a night-shift "night" that sits inside one date (08:00 to 18:00) the key is that date. Once-per-night gating flags in `localStorage`, the override limit, shutdown completion and "Your bandwidth was N when you stopped" all use this key, so they follow the person's derived night rather than the calendar date.
+
+### 15.1a "When do you usually work?" (work schedule)
+
+Night mode follows the person's day, not the clock, so it works for night-shift and rotating-shift workers.
+
+- **Model** (`preferences`, schema v5; Rust `storage/preferences.rs`, TypeScript `src/lib/preferences/types.ts`): `schedule_mode` (`standard` | `night_shift` | `custom`, default standard), `work_days` (seven booleans, Monday first, default Monday to Friday, stored as `1111100`), `work_start` and `work_end` (`HH:MM`, may cross midnight, default 09:00 to 17:00), `phase_override` (advanced: the four explicit phase fields win), `keep_shift_rhythm_on_days_off` (night_shift only, default off) and `schedule_setup_done` (the first-run card was answered). Validation rejects an unknown mode, malformed times and `work_start == work_end`; a hand-edited row is sanitised to defaults on read.
+- **Derivation** (one pure function, `derivePhaseBounds` in `src/lib/night/schedule.ts`, twin `derive_phase_bounds` in Rust): `standard` keeps the standard clock. `night_shift` and `custom` derive from the work hours: wind-down 1 hour after work ends, shutdown 3 hours after, night protection 5 hours after, and the night ends 1 hour before work starts, all modulo 24 hours. A 19:00 to 07:00 shift gives 08:00 / 10:00 / 12:00 / 18:00; 22:00 to 06:00 gives 07:00 / 09:00 / 11:00 / 21:00; 09:00 to 17:00 gives 18:00 / 20:00 / 22:00 / 08:00. If the derived bounds do not satisfy the ordering rule (the gap between shifts is under six hours) or the hours are malformed, the standard clock applies and the reason is surfaced in Settings. With `phase_override` on, the explicit fields win when they are in order, otherwise the same fallback.
+- **Days off and shifts** (`resolveNight`): for a schedule-derived night, the relevant shift is the one in progress or the one that ended most recently, and the day it started decides. On a work day the derived bounds apply; while the person is on shift there is no night at all (the phase is `day`); on a day off the standard clock applies so a nurse on a day off still has a normal night, unless the mode is `night_shift` and "keep my shift rhythm on days off" is ticked. The explicit override applies on every day.
+- **Migration v5** (`ensure_schedule_columns`): adds the seven columns idempotently. A pre-v5 row whose phase bounds were changed from the defaults gets `phase_override = 1`, so hand-set times keep winning instead of being replaced by the standard clock.
+- **Setup:** a first-run card under the idle HUD, once and remembered, with three choices in plain words: "Regular daytime hours (default)", "I work nights or rotating shifts", "Custom". Picking a shift or custom schedule opens Settings with that mode preselected and nothing saved yet; "Later" keeps the standard clock and does not ask again. Settings edits live in a local draft (`SettingsPanel`) and are validated as a whole (`validatePreferencesDraft` in `src/lib/settings-flow.ts`, the twin of the Rust `validate`) on Save: one write, then a one-line confirmation under the HUD ("Saved. Wind-down from 8:00 pm, …") and the person returns to where they were, the entry point after the first-run card. Cancel drops the draft. Saving each keystroke used to re-derive the phases mid-edit, and a flip into night protection let the STOP screen replace the open panel. The Settings section "When do you usually work?" has the same three choices, day-of-week toggles, start and end time pickers, the days-off tick for shift workers, a live preview line that reads the derived phases back in plain words ("Wind-down from 8:00 pm, shutdown from 10:00 pm, night protection from midnight to 6:00 am.") with any fallback reason, and the advanced "Set the phase times myself" override that reveals the four explicit pickers.
+- **Parking lot, not built:** habit-learned suggestions ("your last two weeks suggest you stop around 11pm, move Shutdown?") derived from `night_events` and session ends. If it is ever built it is suggest-only, a line in Settings with an Apply button, never a silent change to the schedule. Nothing learns or adapts on its own today (see the note at the top of `src/lib/night/schedule.ts`).
+
+### 15.2 Tone and Prompt Style
+
+- **Tone:** `gentle` | `standard` | `firm` (default standard). Gentle uses softer titles and actions, never escalates to a Flow-mode delay gate (penalties still apply) and caps the night multiplier at x1.2. Firm uses direct wording and the existing escalation. Nudge thresholds are unchanged in every tone.
+- **Prompt style:** `mindfulness` | `scientific` | `spiritual` (default mindfulness). Drives the reset prompt shown during a ritual, the reset panel subheading, the intervention message and the AI pause subtext. The spiritual variant is kept available but is not the default.
+- **Implementation:** one copy table in `src/lib/copy/index.ts` consumed by `InterventionOverlayAdapter`, `ResetPanelAdapter`, the night cards and panels and the AI pause overlay. App.tsx routes `getInterventionConfig` through a single tone-aware wrapper.
+
+### 15.3 AI-Site Pause ("Hold. Stay here.")
+
+- **Trigger:** during a session, the frontmost browser tab is an AI chat site (chat.openai.com, chatgpt.com, claude.ai, gemini.google.com, perplexity.ai, chat.deepseek.com, grok.com) and the user switches away from it (tab or app) within 25 seconds of arriving.
+- **Response:** a small non-blocking card under the HUD for about 6 seconds, at most once every 10 minutes (once per hour on gentle tone). These domains stay in the productive list.
+- **Platform:** macOS only for now. Tab URLs come from AppleScript (`telemetry/app_monitor.rs`); on Windows no tab events are emitted and the feature is silently absent (the settings toggle says so). Logic lives in `src/lib/telemetry/ai-sites.ts` and `src/hooks/useAiSitePause.ts`.
+
+### 15.4 What is verified, and what is not
+
+Verified by automated tests (run on Linux; `cargo test` in `src-tauri`, `npm test`, `npm run build`):
+
+- Rust: `storage/preferences.rs` (defaults, round trip with the new columns, rejection of malformed times, out-of-order phases and bad schedules, sanitising a hand-edited row, in-place upgrade of v3 and v4 tables including the override marking, deserialising v3- and v4-shaped payloads, the phase derivation for standard, a 19:00 to 07:00 shift, 22:00 to 06:00, custom hours that wrap midnight, the too-short-gap fallback and the explicit override, work-days text round trip); `storage/night.rs` (record and read back, per-night counts for the override limit and shutdown completion, distinct-night counts for the insomnia line, latest event, input rejection, clear); `storage/database.rs` (migrations idempotent at v5, a v3 database upgraded keeping its preferences, and a v4 database upgraded to v5 with a schedule saved through it).
+- TypeScript (vitest): the Settings draft (`src/lib/settings-flow.test.ts`: tolerant clock normalisation, whole-draft validation, the changed-fields patch, the saved line, the return panel, and the regression that a night-shift edit landing in night protection cannot evict Settings), a guarded panel-size lookup, phase resolution across midnight with default and custom bounds, ordering validation, night keys across midnight for the standard clock, a night-shift day "night" and a later-crossing window, `derivePhaseBounds` for standard, 19:00 to 07:00, 22:00 to 06:00 and custom 09:00 to 17:00, the fallbacks and the override, shift detection, `resolveNight` on work days, on shift, on days off with and without the shift-rhythm tick, the plain-words preview, multiplier selection and the gentle cap, the tooltip note, override limits and countdown arithmetic, the insomnia wording, the wind-down estimate, the copy table and the AI-site tracker.
+
+Not run on a Mac in this pass, so unverified end to end: the Settings Save/Cancel footer fitting inside the 900 px window and the saved line fitting above the entry point panel; the actual window resizing for the new `shutdown` and `nightProtection` panels, the taller wind-down and schedule setup cards and the now-scrolling Settings panel; the first-run schedule card appearing once and staying gone after a restart (it is read from the `preferences` row, which is tested, but the packaged app was not launched); the telemetry activity trigger firing from real app and tab switch events; the override countdown surviving an app restart (it is read back from `localStorage` on load, but this was not exercised in the packaged app); the Tauri IPC round trip for the five `night_events` commands (the storage functions behind them are tested, the commands are registered in `main.rs`, but no UI-driven call was made). Timing behaviour was tested with fixed dates, not by waiting through a real night.
+
+---
+
 ## Summary of Technical Capabilities
 
 | Capability | Implementation |
@@ -586,7 +643,7 @@ pub trait PlatformMonitor {
 | **AI Focus Coach** | Personalized recommendations |
 | **Team Analytics** | Manager dashboard |
 | **Calendar Integration** | Auto-block focus time |
-| **Browser Extension** | Tab-level blocking |
+| **Browser Extension** | Retired; its three-phase night mode, tone/style and AI pause now live in the app (see section 15) |
 | **Mobile Companion** | Break reminders, stats |
 | **Wearable Integration** | HRV-based calibration |
 
