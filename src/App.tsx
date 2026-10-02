@@ -146,7 +146,7 @@ function App() {
             tauriBridge.resizeWindow(650, 700)
           } else {
             // Restore to HUD size (will be resized again by other effects if panel is open)
-            tauriBridge.resizeWindow(320, 80)
+            tauriBridge.resizeWindow(360, 80)
           }
           
           return newState
@@ -557,7 +557,7 @@ function App() {
       resizeForPanel('endSession')
     } else if (!currentPanel) {
       if (cardBelowHudVisible) {
-        tauriBridge.resizeWindow(320, tallCardVisible ? 440 : 240).catch(err => console.error('[Window] Resize failed:', err))
+        tauriBridge.resizeWindow(360, tallCardVisible ? 440 : 240).catch(err => console.error('[Window] Resize failed:', err))
       } else {
         resizeForPanel(null) // Back to HUD only
       }
@@ -2309,7 +2309,7 @@ function App() {
   if (mode === 'loading') {
     return (
       <div className="w-full h-full bg-transparent flex items-center justify-center">
-        <div className="w-[320px] h-[60px] rounded-full bg-[#0a0f0d]/90 backdrop-blur-xl border border-[#2f4a42]/40 shadow-2xl flex items-center justify-center">
+        <div className="w-[360px] h-[60px] rounded-full bg-[#0a0f0d]/90 backdrop-blur-xl border border-[#2f4a42]/40 shadow-2xl flex items-center justify-center">
           <div className="text-cyan-400 animate-pulse">Initializing...</div>
         </div>
       </div>

@@ -6,14 +6,14 @@ import { tauriBridge } from '@/lib/tauri-bridge'
 // Panel dimensions - increased for better content fit
 // Heights include HUD (80px) + margin (12px) + panel content
 export const PANEL_DIMENSIONS = {
-  hudOnly: { width: 320, height: 80 },
+  hudOnly: { width: 360, height: 80 },
   calibration: { width: 420, height: 720 },      // Calibration ceremony
   preSession: { width: 420, height: 700 },       // 6-step wizard needs more height
   entryPoint: { width: 420, height: 700 },       // Entry Point: How do you want to start?
   quickStart: { width: 500, height: 740 },       // Quick Start panel (wider)
   presetPicker: { width: 480, height: 700 },     // Preset Picker panel
   savePrompt: { width: 480, height: 700 },        // Save Preset Prompt panel
-  reset: { width: 520, height: 520 },            // Reset ritual selection
+  reset: { width: 520, height: 700 },            // Reset: selection or running ritual, plus a context card above it (landing / critical / pre-meeting / night) and, at night, the Shutdown row
   parkingLot: { width: 540, height: 640 },       // Parking lot management
   parkingLotHarvest: { width: 660, height: 720 },// Harvest panel
   postSessionSummary: { width: 640, height: 850 },// Session summary (with bandwidth impact)

@@ -60,7 +60,7 @@ export function ResetPanelAdapter({
   return (
     <PanelContainer isOpen={isOpen}>
       {context === 'critical' && (
-        <div className="mb-3 p-3 rounded-xl border border-red-500/40 bg-red-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-red-500/40 bg-red-500/10">
           <p className="text-sm text-red-300 font-light">
             Capacity critical. The session is paused.
           </p>
@@ -70,7 +70,7 @@ export function ResetPanelAdapter({
         </div>
       )}
       {context === 'pre-meeting' && (
-        <div className="mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
           <p className="text-sm text-cyan-300 font-light">
             Meeting soon. Arrive with capacity.
           </p>
@@ -80,7 +80,7 @@ export function ResetPanelAdapter({
         </div>
       )}
       {context === 'night' && (
-        <div className="mb-3 p-3 rounded-xl border border-indigo-400/40 bg-indigo-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-indigo-400/40 bg-indigo-500/10">
           <p className="text-sm text-indigo-200 font-light">
             {NIGHT_COPY.shutdownNudgeTitle}
           </p>
@@ -90,7 +90,7 @@ export function ResetPanelAdapter({
         </div>
       )}
       {context === 'landing' && (
-        <div className="mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
+        <div className="w-[475px] mb-3 p-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10">
           <p className="text-sm text-cyan-300 font-light">
             That session ended before you were done.
           </p>
