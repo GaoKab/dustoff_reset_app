@@ -2,15 +2,10 @@ name: Build macOS
 
 on:
   workflow_dispatch: # Manual trigger — click "Run workflow" on GitHub
-  push:
-    tags:
-      - 'v*' # Also builds automatically when a version tag is pushed
 
 jobs:
   build-macos:
     runs-on: macos-latest
-    permissions:
-      contents: write # needed to create the draft release on a tag push
     steps:
       - uses: actions/checkout@v4
 
@@ -48,24 +43,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('DustOff Reset {0}', github.ref_name) || '' }}
-          releaseBody: 'macOS, Apple Silicon. Signed and notarized. Nothing leaves your Mac: no account, no server.'
-          releaseDraft: true
-          prerelease: true
 
       - name: Build Tauri app (unsigned)
         if: steps.signing.outputs.enabled != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('DustOff Reset {0}', github.ref_name) || '' }}
-          releaseBody: 'Unsigned early build for macOS on Apple Silicon. First open: System Settings > Privacy & Security > Open Anyway. Nothing leaves your Mac: no account, no server.'
-          releaseDraft: true
-          prerelease: true
 
       - name: Upload artifact (.dmg)
         uses: actions/upload-artifact@v4

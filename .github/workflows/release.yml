@@ -1,0 +1,105 @@
+name: Release
+
+# One version tag builds both installers and publishes them as a single draft
+# pre-release in the PUBLIC releases repository, GaoKab/dustoff-reset-releases,
+# so the source repository can stay private. Gao reviews the draft and publishes.
+#
+# Needs one secret in this repository: RELEASES_TOKEN, a fine-grained personal
+# access token with "Contents: read and write" on dustoff-reset-releases only.
+# The six Apple secrets (documentation/distribution/APPLE_SIGNING_SETUP.md)
+# turn on signing and notarization; without them the macOS build is unsigned.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - name: Decide signed or unsigned
+        id: signing
+        run: echo "enabled=${{ secrets.APPLE_CERTIFICATE != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Build (signed and notarized)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Build (unsigned)
+        if: steps.signing.outputs.enabled != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Record signing state
+        run: echo "${{ steps.signing.outputs.enabled }}" > signed.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            signed.txt
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - name: Build (unsigned)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  publish:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Write the release note
+        id: note
+        run: |
+          if [ "$(cat dist/macos/signed.txt)" = "true" ]; then
+            MAC="macOS, Apple Silicon: signed and notarized. Open it like any app."
+          else
+            MAC="macOS, Apple Silicon: unsigned test build. First open: System Settings > Privacy & Security > Open Anyway."
+          fi
+          WIN="Windows: unsigned test build, untested beyond CI. First run: More info, then Run anyway. Browser-tab detection and the calendar nudge are macOS only in this version."
+          printf '%s\n\n%s\n\nNothing leaves your machine: no account, no server, no analytics.\n' "$MAC" "$WIN" > note.md
+          rm dist/macos/signed.txt
+      - name: Create the draft pre-release in the public releases repository
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: GaoKab/dustoff-reset-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: DustOff Reset ${{ github.ref_name }}
+          body_path: note.md
+          draft: true
+          prerelease: true
+          files: |
+            dist/macos/*.dmg
+            dist/windows/*.msi
