@@ -25,9 +25,8 @@ jobs:
       # then Run anyway). Signing (Azure Trusted Signing or an OV certificate)
       # comes after the organisation account exists; see
       # fable-build/collateral/17_Windows_Readiness_2026-10-03.md.
-      # On a version-tag push, tauri-action attaches the .msi to the draft
-      # pre-release the macOS job creates for the same tag (same tagName and
-      # releaseName, so it reuses the release rather than making a second one).
+      # Version tags are built and published by release.yml; this workflow is
+      # the manual artifact-only build.
       - name: Build Tauri app (unsigned)
         uses: tauri-apps/tauri-action@v0
         env:
